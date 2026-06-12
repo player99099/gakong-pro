@@ -1,0 +1,37 @@
+---
+description: 가공관리 Pro ERP 프로젝트 핵심 규칙
+alwaysApply: true
+---
+
+# 가공관리 Pro — 개발 규칙
+
+금속가공업체용 미니 ERP. 상세 맥락은 `HANDOFF.md` 참고.
+
+## 스택
+React + TypeScript + Vite + Supabase (Auth/DB). CSS는 `src/index.css` 변수 사용.
+
+## 레이어
+- `src/pages/` — UI·폼·서비스 호출
+- `src/services/` — Supabase 쿼리만
+- `src/types/` — DB 타입
+- `src/lib/supabase.ts` — 클라이언트 단일 진입점
+- `src/lib/constants.ts` — 메뉴·enum (수정 시 types와 동기화)
+
+## 범위 통제
+- 요청·지시서·HANDOFF에 없는 기능 임의 추가 금지
+- unrelated 파일 수정 금지
+- placeholder 메뉴는 지시 없이 구현하지 않음
+
+## UI
+- PC 업무용, 14px 본문, 네이비 사이드바, 활성 메뉴·선택 행 강조
+- input/button 높이 38~42px, 상태는 Badge
+- 삭제: confirm / 에러: alert / 빈 데이터: EmptyState
+
+## DB·보안
+- 스키마 변경은 `supabase/schema.sql`에 반영
+- `created_by`/`updated_by`에 `useAuth().userEmail` 사용
+- 프론트에는 `VITE_SUPABASE_*`만. service_role·DB 비밀번호 금지
+
+## 완료 시
+- `npm run build` 통과 확인
+- 변경 파일·실행 방법·미구현 항목 보고
