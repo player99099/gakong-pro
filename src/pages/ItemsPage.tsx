@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { ITEM_TYPES } from '../lib/constants';
-import { fetchCustomers } from '../services/customers';
+import { fetchCustomers, findOrCreateCustomer } from '../services/customers';
 import {
   createBomItem,
   createItem,
@@ -17,6 +17,7 @@ import {
 import type { BomItem, Customer, Item } from '../types';
 import { Modal } from '../components/ui/Modal';
 import { EmptyState } from '../components/ui/EmptyState';
+import { CustomerCombobox } from '../components/ui/CustomerCombobox';
 
 const emptyItemForm: ItemInput = {
   customer_id: null,
@@ -59,6 +60,7 @@ export function ItemsPage() {
   const [editingItem, setEditingItem] = useState<Item | null>(null);
   const [editingBom, setEditingBom] = useState<BomItem | null>(null);
   const [itemForm, setItemForm] = useState<ItemInput>(emptyItemForm);
+  const [customerName, setCustomerName] = useState('');
   const [bomForm, setBomForm] = useState<BomItemInput>(emptyBomForm);
   const [formError, setFormError] = useState('');
   const [error, setError] = useState('');
@@ -107,12 +109,14 @@ export function ItemsPage() {
   const openCreateItem = () => {
     setEditingItem(null);
     setItemForm(emptyItemForm);
+    setCustomerName('');
     setFormError('');
     setItemModalOpen(true);
   };
 
   const openEditItem = (item: Item) => {
     setEditingItem(item);
+    setCustomerName(item.customers?.customer_name ?? '');
     setItemForm({
       customer_id: item.customer_id,
       drawing_no: item.drawing_no ?? '',
@@ -137,10 +141,20 @@ export function ItemsPage() {
     }
     setSaving(true);
     try {
-      if (editingItem) {
-        await updateItem(editingItem.id, itemForm, userEmail);
+      let payload = { ...itemForm };
+      if (customerName.trim()) {
+        const customer = await findOrCreateCustomer(customerName, userEmail);
+        payload = { ...payload, customer_id: customer.id };
+        const updated = await fetchCustomers();
+        setCustomers(updated);
       } else {
-        const created = await createItem(itemForm, userEmail);
+        payload = { ...payload, customer_id: null };
+      }
+
+      if (editingItem) {
+        await updateItem(editingItem.id, payload, userEmail);
+      } else {
+        const created = await createItem(payload, userEmail);
         setSelectedId(created.id);
       }
       setItemModalOpen(false);
@@ -414,22 +428,13 @@ export function ItemsPage() {
       >
         {formError && <div className="alert alert-error">{formError}</div>}
         <div className="form-grid cols-3">
-          <div className="form-group">
-            <label>고객사</label>
-            <select
-              value={itemForm.customer_id ?? ''}
-              onChange={(e) =>
-                updateItemField('customer_id', e.target.value || null)
-              }
-            >
-              <option value="">선택</option>
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.customer_name}
-                </option>
-              ))}
-            </select>
-          </div>
+          <CustomerCombobox
+            id="item-customer"
+            value={customerName}
+            customers={customers}
+            onChange={setCustomerName}
+            placeholder="고객사명 입력 또는 선택"
+          />
           <div className="form-group">
             <label>도번</label>
             <input

@@ -8,7 +8,11 @@ import { CustomersPage } from './pages/CustomersPage';
 import { VendorsPage } from './pages/VendorsPage';
 import { ItemsPage } from './pages/ItemsPage';
 import { OrdersPage } from './pages/OrdersPage';
-import { PlaceholderPage } from './pages/PlaceholderPage';
+import { DeliveryPage } from './pages/DeliveryPage';
+import { WorkOrdersPage } from './pages/WorkOrdersPage';
+import { ProductionPage } from './pages/ProductionPage';
+import { ProductionLogPage } from './pages/ProductionLogPage';
+import { SettingsPage } from './pages/SettingsPage';
 
 export default function App() {
   return (
@@ -25,29 +29,14 @@ export default function App() {
           >
             <Route index element={<DashboardPage />} />
             <Route path="orders" element={<OrdersPage />} />
-            <Route
-              path="work-orders"
-              element={<PlaceholderPage title="작업지시" />}
-            />
-            <Route
-              path="production"
-              element={<PlaceholderPage title="생산관리" />}
-            />
-            <Route
-              path="production-log"
-              element={<PlaceholderPage title="생산일보" />}
-            />
-            <Route
-              path="delivery"
-              element={<PlaceholderPage title="납품관리" />}
-            />
+            <Route path="work-orders" element={<WorkOrdersPage />} />
+            <Route path="production" element={<ProductionPage />} />
+            <Route path="production-log" element={<ProductionLogPage />} />
+            <Route path="delivery" element={<DeliveryPage />} />
             <Route path="customers" element={<CustomersPage />} />
             <Route path="vendors" element={<VendorsPage />} />
             <Route path="items" element={<ItemsPage />} />
-            <Route
-              path="settings"
-              element={<PlaceholderPage title="설정" />}
-            />
+            <Route path="settings" element={<SettingsPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

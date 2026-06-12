@@ -35,15 +35,118 @@ export const PROCESS_STATUSES: ProcessStatus[] = [
   '출하대기',
 ];
 
-export const MENU_ITEMS = [
-  { path: '/', label: '대시보드', icon: '📊' },
-  { path: '/orders', label: '수주관리', icon: '📋' },
-  { path: '/work-orders', label: '작업지시', icon: '🔧', placeholder: true },
-  { path: '/production', label: '생산관리', icon: '⚙️', placeholder: true },
-  { path: '/production-log', label: '생산일보', icon: '📝', placeholder: true },
-  { path: '/delivery', label: '납품관리', icon: '🚚', placeholder: true },
-  { path: '/customers', label: '고객사', icon: '🏢' },
-  { path: '/vendors', label: '매입업체', icon: '🏭' },
-  { path: '/items', label: '품목/BOM', icon: '📦' },
-  { path: '/settings', label: '설정', icon: '⚙️', placeholder: true },
-] as const;
+export const DEFAULT_DEFECT_TYPES = [
+  '치수불량', '표면불량', '공구파손', '소재불량', '프로그램오류', '셋업오류', '기타',
+];
+
+export const DEFAULT_SETUP_TYPES = [
+  '공구교체', '프로그램변경', '지그변경', '기타',
+];
+
+export type ModuleGroupId =
+  | 'dashboard'
+  | 'master'
+  | 'orders'
+  | 'production'
+  | 'delivery'
+  | 'settings';
+
+export type NavIconName =
+  | 'dashboard'
+  | 'orders'
+  | 'work-orders'
+  | 'production'
+  | 'production-log'
+  | 'delivery'
+  | 'customers'
+  | 'vendors'
+  | 'items'
+  | 'settings';
+
+export interface RouteConfig {
+  path: string;
+  label: string;
+  group: ModuleGroupId;
+  icon: NavIconName;
+}
+
+export const ROUTES: RouteConfig[] = [
+  { path: '/', label: '대시보드', group: 'dashboard', icon: 'dashboard' },
+  { path: '/orders', label: '수주관리', group: 'orders', icon: 'orders' },
+  { path: '/work-orders', label: '작업지시', group: 'production', icon: 'work-orders' },
+  { path: '/production', label: '생산관리', group: 'production', icon: 'production' },
+  { path: '/production-log', label: '생산일보', group: 'production', icon: 'production-log' },
+  { path: '/delivery', label: '납품관리', group: 'delivery', icon: 'delivery' },
+  { path: '/customers', label: '고객사', group: 'master', icon: 'customers' },
+  { path: '/vendors', label: '매입업체', group: 'master', icon: 'vendors' },
+  { path: '/items', label: '품목/BOM', group: 'master', icon: 'items' },
+  { path: '/settings', label: '설정', group: 'settings', icon: 'settings' },
+];
+
+export const MODULE_GROUPS: {
+  id: ModuleGroupId;
+  label: string;
+  defaultPath: string;
+}[] = [
+  { id: 'dashboard', label: '대시보드', defaultPath: '/' },
+  { id: 'master', label: '기준정보', defaultPath: '/customers' },
+  { id: 'orders', label: '수주관리', defaultPath: '/orders' },
+  { id: 'production', label: '생산관리', defaultPath: '/work-orders' },
+  { id: 'delivery', label: '납품관리', defaultPath: '/delivery' },
+  { id: 'settings', label: '설정', defaultPath: '/settings' },
+];
+
+export const SIDEBAR_SECTIONS: {
+  label: string;
+  paths: string[];
+}[] = [
+  {
+    label: '주요 업무',
+    paths: ['/', '/orders', '/work-orders', '/production', '/production-log', '/delivery'],
+  },
+  {
+    label: '기준정보',
+    paths: ['/customers', '/vendors', '/items'],
+  },
+  {
+    label: '관리',
+    paths: ['/settings'],
+  },
+];
+
+/** @deprecated Use ROUTES — kept for backward compatibility */
+export const MENU_ITEMS = ROUTES.map((r) => ({
+  path: r.path,
+  label: r.label,
+  icon: r.icon,
+}));
+
+export const OPEN_TABS_STORAGE_KEY = 'gakong_open_tabs';
+
+export function getRouteByPath(pathname: string): RouteConfig | undefined {
+  const normalized = pathname === '' ? '/' : pathname;
+  const exact = ROUTES.find((r) => r.path === normalized);
+  if (exact) return exact;
+
+  return ROUTES.filter((r) => r.path !== '/')
+    .sort((a, b) => b.path.length - a.path.length)
+    .find((r) => normalized.startsWith(r.path));
+}
+
+export function getModuleGroupByPath(pathname: string): ModuleGroupId {
+  return getRouteByPath(pathname)?.group ?? 'dashboard';
+}
+
+export function getModuleGroupLabel(groupId: ModuleGroupId): string {
+  return MODULE_GROUPS.find((g) => g.id === groupId)?.label ?? groupId;
+}
+
+export function createDefaultDashboardTab() {
+  const route = ROUTES[0];
+  return {
+    path: route.path,
+    label: route.label,
+    group: route.group,
+    closable: false,
+  };
+}

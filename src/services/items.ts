@@ -75,6 +75,88 @@ export async function deleteItem(id: string): Promise<void> {
   if (error) throw error;
 }
 
+export interface DrawingLookupResult {
+  source: 'item' | 'bom';
+  item_id: string;
+  drawing_no: string;
+  item_name: string;
+  material: string | null;
+  surface_treatment: string | null;
+  unit_price: number;
+  customer_id: string | null;
+  customer_name: string | null;
+}
+
+function isDrawingMatch(
+  stored: string | null | undefined,
+  input: string,
+): boolean {
+  return (stored ?? '').trim().toLowerCase() === input.trim().toLowerCase();
+}
+
+export async function lookupByDrawingNo(
+  drawingNo: string,
+): Promise<DrawingLookupResult | null> {
+  const trimmed = drawingNo.trim();
+  if (!trimmed) return null;
+
+  const { data: itemRows, error: itemError } = await supabase
+    .from('items')
+    .select('*, customers(customer_name)')
+    .ilike('drawing_no', trimmed);
+
+  if (itemError) throw itemError;
+
+  const item = (itemRows ?? []).find((row) =>
+    isDrawingMatch(row.drawing_no, trimmed),
+  );
+  if (item) {
+    return {
+      source: 'item',
+      item_id: item.id,
+      drawing_no: item.drawing_no ?? trimmed,
+      item_name: item.item_name,
+      material: item.material,
+      surface_treatment: item.surface_treatment,
+      unit_price: item.unit_price || 0,
+      customer_id: item.customer_id,
+      customer_name: item.customers?.customer_name ?? null,
+    };
+  }
+
+  const { data: bomRows, error: bomError } = await supabase
+    .from('bom_items')
+    .select(
+      '*, parent_item:items!parent_item_id(id, customer_id, customers(customer_name))',
+    )
+    .ilike('drawing_no', trimmed);
+
+  if (bomError) throw bomError;
+
+  const bom = (bomRows ?? []).find((row) =>
+    isDrawingMatch(row.drawing_no, trimmed),
+  );
+  if (!bom) return null;
+
+  const parent = bom.parent_item as
+    | (Pick<Item, 'id' | 'customer_id'> & {
+        customers?: { customer_name: string } | null;
+      })
+    | null;
+
+  return {
+    source: 'bom',
+    item_id: parent?.id ?? bom.parent_item_id,
+    drawing_no: bom.drawing_no ?? trimmed,
+    item_name: bom.item_name,
+    material: bom.material,
+    surface_treatment: bom.surface_treatment,
+    unit_price: bom.unit_price || 0,
+    customer_id: parent?.customer_id ?? null,
+    customer_name: parent?.customers?.customer_name ?? null,
+  };
+}
+
 export async function fetchBomItems(parentItemId: string): Promise<BomItem[]> {
   const { data, error } = await supabase
     .from('bom_items')

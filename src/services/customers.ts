@@ -58,3 +58,40 @@ export async function deleteCustomer(id: string): Promise<void> {
   const { error } = await supabase.from('customers').delete().eq('id', id);
   if (error) throw error;
 }
+
+/** 고객사명으로 조회, 없으면 신규 생성 후 반환 */
+export async function findOrCreateCustomer(
+  customerName: string,
+  userEmail: string,
+): Promise<Customer> {
+  const trimmed = customerName.trim();
+  if (!trimmed) {
+    throw new Error('고객사명을 입력해 주세요.');
+  }
+
+  const { data, error } = await supabase
+    .from('customers')
+    .select('*')
+    .ilike('customer_name', trimmed);
+
+  if (error) throw error;
+
+  const exact = (data ?? []).find(
+    (c) => c.customer_name.trim().toLowerCase() === trimmed.toLowerCase(),
+  );
+  if (exact) return exact;
+
+  return createCustomer(
+    {
+      customer_name: trimmed,
+      manager_name: '',
+      phone: '',
+      company_email: '',
+      personal_email: '',
+      address: '',
+      business_type: '',
+      memo: '',
+    },
+    userEmail,
+  );
+}

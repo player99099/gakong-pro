@@ -27,7 +27,24 @@ loadEnv();
 
 const url = process.env.VITE_SUPABASE_URL;
 const key = process.env.VITE_SUPABASE_ANON_KEY;
-const tables = ['customers', 'vendors', 'items', 'bom_items', 'orders', 'users_profile'];
+const tables = [
+  'customers',
+  'vendors',
+  'items',
+  'bom_items',
+  'orders',
+  'deliveries',
+  'delivery_items',
+  'work_orders',
+  'process_logs',
+  'production_logs',
+  'process_steps',
+  'defect_types',
+  'setup_types',
+  'surface_treatments',
+  'company_settings',
+  'users_profile',
+];
 
 if (!url || !key) {
   console.error('❌ .env에 VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY가 필요합니다.');

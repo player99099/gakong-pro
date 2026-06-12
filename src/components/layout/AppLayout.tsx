@@ -1,25 +1,24 @@
-import { Outlet, useLocation } from 'react-router-dom';
-import { Sidebar } from './Sidebar';
-import { Header } from './Header';
-import { MENU_ITEMS } from '../../lib/constants';
+import { Outlet } from 'react-router-dom';
+import { OpenTabsProvider } from '../../contexts/OpenTabsContext';
+import { TopNav } from './TopNav';
+import { OpenTabsBar } from './OpenTabsBar';
 
-export function AppLayout() {
-  const location = useLocation();
-  const currentMenu = MENU_ITEMS.find(
-    (m) =>
-      m.path === location.pathname ||
-      (m.path !== '/' && location.pathname.startsWith(m.path)),
-  );
-
+function AppLayoutContent() {
   return (
     <div className="app-layout">
-      <Sidebar />
-      <div className="main-area">
-        <Header title={currentMenu?.label ?? '가공관리 Pro'} />
-        <main className="main-content">
-          <Outlet />
-        </main>
-      </div>
+      <TopNav />
+      <OpenTabsBar />
+      <main className="main-content">
+        <Outlet />
+      </main>
     </div>
+  );
+}
+
+export function AppLayout() {
+  return (
+    <OpenTabsProvider>
+      <AppLayoutContent />
+    </OpenTabsProvider>
   );
 }
