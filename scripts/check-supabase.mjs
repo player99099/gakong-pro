@@ -78,5 +78,6 @@ for (const table of tables) {
 }
 
 console.log('');
-console.log('📌 테이블이 없으면 Supabase 대시보드 → SQL Editor에서 supabase/schema.sql 실행');
+console.log('📌 테이블이 없으면: node scripts/apply-migrations.mjs (002→003)');
+console.log('   또는 Supabase SQL Editor에서 supabase/migrations/ 순서대로 실행');
 console.log('📌 로그인 계정: Authentication → Users → Add user');
