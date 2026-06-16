@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import type { ProcessTravelerPrintData } from '../types/processTraveler';
 import type {
   Order,
   WorkOrder,
@@ -147,7 +148,83 @@ export async function updateWorkOrder(
   return data;
 }
 
+/** 작업지시가 있을 때만 거래처 연동 (실패해도 throw 하지 않음) */
+export async function syncWorkOrderCustomerForOrder(
+  orderId: string,
+  customerId: string | null | undefined,
+  userEmail: string,
+): Promise<boolean> {
+  if (!customerId) return false;
+
+  const { data: workOrder, error: findError } = await supabase
+    .from('work_orders')
+    .select('id')
+    .eq('order_id', orderId)
+    .maybeSingle();
+
+  if (findError || !workOrder) return false;
+
+  const { error } = await supabase
+    .from('work_orders')
+    .update({ customer_id: customerId, updated_by: userEmail })
+    .eq('id', workOrder.id);
+
+  return !error;
+}
+
 export async function deleteWorkOrder(id: string): Promise<void> {
   const { error } = await supabase.from('work_orders').delete().eq('id', id);
   if (error) throw error;
+}
+
+export async function incrementWorkOrderPrintCounts(
+  ids: string[],
+  userEmail: string | null,
+): Promise<void> {
+  if (ids.length === 0) return;
+
+  for (const id of ids) {
+    const { data, error: readErr } = await supabase
+      .from('work_orders')
+      .select('print_count')
+      .eq('id', id)
+      .single();
+
+    if (readErr) throw readErr;
+
+    const next = (Number(data?.print_count) || 0) + 1;
+    const { error } = await supabase
+      .from('work_orders')
+      .update({ print_count: next, updated_by: userEmail })
+      .eq('id', id);
+
+    if (error) throw error;
+  }
+}
+
+/** 공정이동표 출력 — 수주 연동 필드 포함 */
+export async function fetchWorkOrderPrintData(
+  workOrderId: string,
+): Promise<ProcessTravelerPrintData> {
+  const workOrder = await fetchWorkOrderById(workOrderId);
+
+  const { data: order, error } = await supabase
+    .from('orders')
+    .select('material, surface_treatment')
+    .eq('id', workOrder.order_id)
+    .maybeSingle();
+
+  if (error) throw error;
+
+  return {
+    order_no: workOrder.order_no,
+    customer_name: workOrder.customers?.customer_name ?? null,
+    drawing_no: workOrder.drawing_no,
+    item_name: workOrder.item_name,
+    material: order?.material ?? null,
+    surface_treatment: order?.surface_treatment ?? null,
+    order_quantity: workOrder.order_quantity,
+    due_date: workOrder.due_date,
+    instruction_memo: workOrder.instruction_memo,
+  };
 }

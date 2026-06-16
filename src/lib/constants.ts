@@ -16,6 +16,17 @@ export const ITEM_TYPES: ItemType[] = [
   '사급품',
 ];
 
+/** 품목 목록 구분 — 단품 / Ass'y (items.level 저장) */
+export const ITEM_PRODUCT_KINDS = ['단품', "Ass'y"] as const;
+export type ItemProductKind = (typeof ITEM_PRODUCT_KINDS)[number];
+
+/** BOM 하위 레벨 (2~5) */
+export const BOM_LEVELS = ['2', '3', '4', '5'] as const;
+export type BomLevel = (typeof BOM_LEVELS)[number];
+
+/** BOM·유형 분류 (구분과 별도) */
+export const ITEM_CATEGORY_TYPES: ItemType[] = ['가공품', '구매품', '사급품'];
+
 export const ORDER_STATUSES: OrderStatus[] = [
   '접수',
   '보류',
@@ -25,6 +36,9 @@ export const ORDER_STATUSES: OrderStatus[] = [
   '출하대기',
   '납품완료',
 ];
+
+/** 수주 화면 — 사용자가 직접 선택 가능한 상태 */
+export const ORDER_MANUAL_STATUSES: OrderStatus[] = ['접수', '취소', '보류'];
 
 export const PROCESS_STATUSES: ProcessStatus[] = [
   '수주접수',
@@ -121,7 +135,48 @@ export const MENU_ITEMS = ROUTES.map((r) => ({
   icon: r.icon,
 }));
 
-export const OPEN_TABS_STORAGE_KEY = 'gakong_open_tabs';
+export function getModuleGroupLabel(groupId: ModuleGroupId): string {
+  return MODULE_GROUPS.find((g) => g.id === groupId)?.label ?? groupId;
+}
+
+export interface GnbGroup {
+  id: ModuleGroupId;
+  label: string;
+  subRoutes: string[];
+}
+
+export const GNB_GROUPS: GnbGroup[] = [
+  {
+    id: 'dashboard',
+    label: '대시보드',
+    subRoutes: ['/'],
+  },
+  {
+    id: 'orders',
+    label: '수주관리',
+    subRoutes: ['/orders'],
+  },
+  {
+    id: 'production',
+    label: '생산',
+    subRoutes: ['/work-orders', '/production', '/production-log'],
+  },
+  {
+    id: 'delivery',
+    label: '납품',
+    subRoutes: ['/delivery'],
+  },
+  {
+    id: 'master',
+    label: '기준정보',
+    subRoutes: ['/customers', '/vendors', '/items'],
+  },
+  {
+    id: 'settings',
+    label: '설정',
+    subRoutes: ['/settings'],
+  },
+];
 
 export function getRouteByPath(pathname: string): RouteConfig | undefined {
   const normalized = pathname === '' ? '/' : pathname;
@@ -135,18 +190,4 @@ export function getRouteByPath(pathname: string): RouteConfig | undefined {
 
 export function getModuleGroupByPath(pathname: string): ModuleGroupId {
   return getRouteByPath(pathname)?.group ?? 'dashboard';
-}
-
-export function getModuleGroupLabel(groupId: ModuleGroupId): string {
-  return MODULE_GROUPS.find((g) => g.id === groupId)?.label ?? groupId;
-}
-
-export function createDefaultDashboardTab() {
-  const route = ROUTES[0];
-  return {
-    path: route.path,
-    label: route.label,
-    group: route.group,
-    closable: false,
-  };
 }

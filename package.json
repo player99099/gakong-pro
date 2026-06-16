@@ -4,16 +4,25 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "setup": "node scripts/setup-local.mjs",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "db:check": "node scripts/check-supabase.mjs",
+    "db:auth-check": "node scripts/check-auth.mjs",
+    "db:migrate": "node scripts/apply-migrations.mjs",
+    "db:migrate:003": "node scripts/apply-migration-003.mjs",
+    "db:migrate:004": "node scripts/apply-migration-004.mjs",
+    "db:migrate:orders": "node scripts/apply-migration-005.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.1",
+    "exceljs": "^4.4.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "react-router-dom": "^7.17.0"
+    "react-router-dom": "^7.17.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

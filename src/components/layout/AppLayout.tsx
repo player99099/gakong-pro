@@ -1,24 +1,15 @@
 import { Outlet } from 'react-router-dom';
-import { OpenTabsProvider } from '../../contexts/OpenTabsContext';
 import { TopNav } from './TopNav';
-import { OpenTabsBar } from './OpenTabsBar';
+import { SubNav } from './SubNav';
 
-function AppLayoutContent() {
+export function AppLayout() {
   return (
     <div className="app-layout">
       <TopNav />
-      <OpenTabsBar />
+      <SubNav />
       <main className="main-content">
         <Outlet />
       </main>
     </div>
-  );
-}
-
-export function AppLayout() {
-  return (
-    <OpenTabsProvider>
-      <AppLayoutContent />
-    </OpenTabsProvider>
   );
 }

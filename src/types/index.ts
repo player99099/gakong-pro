@@ -124,6 +124,9 @@ export interface Order {
   remaining_quantity: number;
   produced_quantity: number;
   defect_quantity: number;
+  seq_no?: string | null;
+  vendor_unit_price?: number;
+  vendor_amount?: number;
   created_by: string | null;
   updated_by: string | null;
   created_at: string;
@@ -139,6 +142,9 @@ export interface OrderSearchParams {
   orderStatus?: string;
   dueDateFrom?: string;
   dueDateTo?: string;
+  seqNo?: string;
+  seqNoFrom?: string;
+  seqNoTo?: string;
 }
 
 export interface DashboardStats {
@@ -235,6 +241,7 @@ export interface WorkOrder {
   process_status: ProcessStatus;
   instruction_memo: string | null;
   drawing_file_name: string | null;
+  print_count: number;
   created_by: string | null;
   updated_by: string | null;
   created_at: string;

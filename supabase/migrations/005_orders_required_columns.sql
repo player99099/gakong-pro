@@ -1,0 +1,10 @@
+-- 005: orders — 앱·엑셀 저장 필수 컬럼 보강 (003·004 일부만 적용된 DB 대비)
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS produced_quantity NUMERIC DEFAULT 0;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS defect_quantity NUMERIC DEFAULT 0;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS seq_no TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS vendor_unit_price NUMERIC DEFAULT 0;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS vendor_amount NUMERIC DEFAULT 0;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_seq_no
+  ON orders(seq_no)
+  WHERE seq_no IS NOT NULL;

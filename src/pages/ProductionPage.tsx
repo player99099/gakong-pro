@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { ORDER_STATUSES, PROCESS_STATUSES } from '../lib/constants';
+import { formatNumber } from '../lib/formatNumber';
 import {
   changeProcessStatus,
   fetchProcessLogs,
@@ -141,27 +142,27 @@ export function ProductionPage() {
       >
         <div className="stat-card primary">
           <div className="stat-label">수주접수</div>
-          <div className="stat-value">{stats?.received ?? 0}</div>
+          <div className="stat-value">{formatNumber(stats?.received ?? 0)}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">도면배포</div>
-          <div className="stat-value">{stats?.drawingDeploy ?? 0}</div>
+          <div className="stat-value">{formatNumber(stats?.drawingDeploy ?? 0)}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">생산</div>
-          <div className="stat-value">{stats?.production ?? 0}</div>
+          <div className="stat-value">{formatNumber(stats?.production ?? 0)}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">후처리</div>
-          <div className="stat-value">{stats?.postProcess ?? 0}</div>
+          <div className="stat-value">{formatNumber(stats?.postProcess ?? 0)}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">출하검사</div>
-          <div className="stat-value">{stats?.shipInspect ?? 0}</div>
+          <div className="stat-value">{formatNumber(stats?.shipInspect ?? 0)}</div>
         </div>
         <div className="stat-card warning">
           <div className="stat-label">출하대기</div>
-          <div className="stat-value">{stats?.readyToShip ?? 0}</div>
+          <div className="stat-value">{formatNumber(stats?.readyToShip ?? 0)}</div>
         </div>
       </div>
 
@@ -287,11 +288,11 @@ export function ProductionPage() {
                       <td>{target.order_no ?? '-'}</td>
                       <td>{target.drawing_no ?? '-'}</td>
                       <td>{target.item_name ?? '-'}</td>
-                      <td>{target.order_quantity}</td>
-                      <td>{Number(target.produced_quantity ?? 0)}</td>
-                      <td>{Number(target.defect_quantity ?? 0)}</td>
-                      <td>{Number(target.delivered_quantity ?? 0)}</td>
-                      <td>{Number(target.remaining_quantity ?? 0)}</td>
+                      <td>{formatNumber(target.order_quantity)}</td>
+                      <td>{formatNumber(target.produced_quantity ?? 0)}</td>
+                      <td>{formatNumber(target.defect_quantity ?? 0)}</td>
+                      <td>{formatNumber(target.delivered_quantity ?? 0)}</td>
+                      <td>{formatNumber(target.remaining_quantity ?? 0)}</td>
                       <td>{target.due_date ?? '-'}</td>
                       <td onClick={(e) => e.stopPropagation()}>
                         <button

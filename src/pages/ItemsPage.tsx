@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { ITEM_TYPES } from '../lib/constants';
+import {
+  BOM_LEVELS,
+  ITEM_CATEGORY_TYPES,
+  ITEM_PRODUCT_KINDS,
+  ITEM_TYPES,
+  type ItemProductKind,
+} from '../lib/constants';
+import { formatNumber } from '../lib/formatNumber';
+import { getItemProductKind, isAssyItem } from '../lib/itemProductKind';
+import { confirmUnitPriceSync } from '../lib/unitPriceSyncConfirm';
 import { fetchCustomers, findOrCreateCustomer } from '../services/customers';
 import {
   createBomItem,
@@ -9,6 +18,10 @@ import {
   deleteItem,
   fetchBomItems,
   fetchItems,
+  getStoredUnitPricesByDrawingNo,
+  lookupByDrawingNo,
+  lookupSinglePartByDrawingNo,
+  syncUnitPriceByDrawingNo,
   updateBomItem,
   updateItem,
   type BomItemInput,
@@ -17,6 +30,7 @@ import {
 import type { BomItem, Customer, Item } from '../types';
 import { Modal } from '../components/ui/Modal';
 import { EmptyState } from '../components/ui/EmptyState';
+import { NumericInput } from '../components/ui/NumericInput';
 import { CustomerCombobox } from '../components/ui/CustomerCombobox';
 
 const emptyItemForm: ItemInput = {
@@ -25,7 +39,7 @@ const emptyItemForm: ItemInput = {
   item_name: '',
   material: '',
   surface_treatment: '',
-  level: '',
+  level: '단품',
   item_type: '가공품',
   quantity: 0,
   total_quantity: 0,
@@ -36,7 +50,7 @@ const emptyItemForm: ItemInput = {
 const emptyBomForm: BomItemInput = {
   parent_item_id: '',
   no: 1,
-  level: '',
+  level: '2',
   drawing_no: '',
   item_name: '',
   material: '',
@@ -47,6 +61,50 @@ const emptyBomForm: BomItemInput = {
   unit_price: 0,
   memo: '',
 };
+
+function itemToInput(item: Item, level?: ItemProductKind): ItemInput {
+  return {
+    customer_id: item.customer_id,
+    drawing_no: item.drawing_no ?? '',
+    item_name: item.item_name,
+    material: item.material ?? '',
+    surface_treatment: item.surface_treatment ?? '',
+    level: level ?? getItemProductKind(item),
+    item_type: item.item_type ?? '가공품',
+    quantity: item.quantity,
+    total_quantity: item.total_quantity,
+    unit_price: item.unit_price,
+    memo: item.memo ?? '',
+  };
+}
+
+function normalizeBomLevel(level: string | null | undefined): string {
+  if (level && (BOM_LEVELS as readonly string[]).includes(level)) return level;
+  return '2';
+}
+
+function ProductKindButtons({
+  value,
+  onChange,
+}: {
+  value: ItemProductKind;
+  onChange: (kind: ItemProductKind) => void;
+}) {
+  return (
+    <div className="kind-toggle">
+      {ITEM_PRODUCT_KINDS.map((k) => (
+        <button
+          key={k}
+          type="button"
+          className={`btn btn-sm ${value === k ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={() => onChange(k)}
+        >
+          {k}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export function ItemsPage() {
   const { userEmail } = useAuth();
@@ -117,21 +175,69 @@ export function ItemsPage() {
   const openEditItem = (item: Item) => {
     setEditingItem(item);
     setCustomerName(item.customers?.customer_name ?? '');
-    setItemForm({
-      customer_id: item.customer_id,
-      drawing_no: item.drawing_no ?? '',
-      item_name: item.item_name,
-      material: item.material ?? '',
-      surface_treatment: item.surface_treatment ?? '',
-      level: item.level ?? '',
-      item_type: item.item_type ?? '가공품',
-      quantity: item.quantity,
-      total_quantity: item.total_quantity,
-      unit_price: item.unit_price,
-      memo: item.memo ?? '',
-    });
+    setItemForm(itemToInput(item));
     setFormError('');
     setItemModalOpen(true);
+  };
+
+  const handleRowClick = (item: Item) => {
+    if (isAssyItem(item)) {
+      setSelectedId(item.id);
+    } else {
+      setSelectedId(null);
+      openEditItem(item);
+    }
+  };
+
+  const handleKindChange = async (
+    item: Item,
+    kind: ItemProductKind,
+  ) => {
+    if (getItemProductKind(item) === kind) return;
+    try {
+      await updateItem(item.id, itemToInput(item, kind), userEmail);
+      if (kind === '단품' && selectedId === item.id) {
+        setSelectedId(null);
+      }
+      await loadItems();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : '구분 저장에 실패했습니다.',
+      );
+    }
+  };
+
+  const applyDrawingLookupToItemForm = async (drawingNo: string) => {
+    const trimmed = drawingNo.trim();
+    if (!trimmed) return;
+    const lookup = await lookupByDrawingNo(trimmed);
+    if (!lookup) return;
+    setItemForm((prev) => ({
+      ...prev,
+      drawing_no: trimmed,
+      item_name: lookup.item_name || prev.item_name,
+      material: lookup.material ?? prev.material,
+      surface_treatment: lookup.surface_treatment ?? prev.surface_treatment,
+      unit_price:
+        lookup.unit_price > 0 ? lookup.unit_price : prev.unit_price,
+    }));
+  };
+
+  const applyDrawingLookupToBomForm = async (drawingNo: string) => {
+    const trimmed = drawingNo.trim();
+    if (!trimmed) return;
+    const lookup = await lookupSinglePartByDrawingNo(trimmed);
+    if (lookup) {
+      setBomForm((prev) => ({
+        ...prev,
+        drawing_no: trimmed,
+        item_name: lookup.item_name || prev.item_name,
+        material: lookup.material ?? prev.material,
+        surface_treatment: lookup.surface_treatment ?? prev.surface_treatment,
+        unit_price:
+          lookup.unit_price > 0 ? lookup.unit_price : prev.unit_price,
+      }));
+    }
   };
 
   const handleSaveItem = async () => {
@@ -151,14 +257,49 @@ export function ItemsPage() {
         payload = { ...payload, customer_id: null };
       }
 
+      const drawingNo = payload.drawing_no?.trim();
+      if (drawingNo) {
+        const storedPrices = await getStoredUnitPricesByDrawingNo(drawingNo);
+        if (
+          !confirmUnitPriceSync({
+            drawingNo,
+            newPrice: payload.unit_price,
+            itemPrice: storedPrices.itemPrice,
+            bomPrice: storedPrices.bomPrice,
+          })
+        ) {
+          setSaving(false);
+          return;
+        }
+      }
+
       if (editingItem) {
         await updateItem(editingItem.id, payload, userEmail);
+        if (isAssyItem({ level: payload.level, item_type: payload.item_type })) {
+          setSelectedId(editingItem.id);
+        } else if (selectedId === editingItem.id) {
+          setSelectedId(null);
+        }
       } else {
         const created = await createItem(payload, userEmail);
-        setSelectedId(created.id);
+        if (isAssyItem(created)) {
+          setSelectedId(created.id);
+        } else {
+          setSelectedId(null);
+        }
       }
+
+      if (drawingNo) {
+        await syncUnitPriceByDrawingNo(
+          drawingNo,
+          Number(payload.unit_price) || 0,
+          userEmail,
+        );
+      }
+
       setItemModalOpen(false);
       await loadItems();
+      if (selectedId) await loadBom(selectedId);
     } catch (err) {
       setFormError(
         err instanceof Error ? err.message : '저장에 실패했습니다.',
@@ -194,7 +335,7 @@ export function ItemsPage() {
     setBomForm({
       parent_item_id: bom.parent_item_id,
       no: bom.no,
-      level: bom.level ?? '',
+      level: normalizeBomLevel(bom.level),
       drawing_no: bom.drawing_no ?? '',
       item_name: bom.item_name,
       material: bom.material ?? '',
@@ -216,12 +357,38 @@ export function ItemsPage() {
     }
     setSaving(true);
     try {
+      const drawingNo = bomForm.drawing_no?.trim();
+      if (drawingNo) {
+        const storedPrices = await getStoredUnitPricesByDrawingNo(drawingNo);
+        if (
+          !confirmUnitPriceSync({
+            drawingNo,
+            newPrice: bomForm.unit_price,
+            itemPrice: storedPrices.itemPrice,
+            bomPrice: storedPrices.bomPrice,
+          })
+        ) {
+          setSaving(false);
+          return;
+        }
+      }
+
       if (editingBom) {
         await updateBomItem(editingBom.id, bomForm, userEmail);
       } else {
         await createBomItem(bomForm, userEmail);
       }
+
+      if (drawingNo) {
+        await syncUnitPriceByDrawingNo(
+          drawingNo,
+          Number(bomForm.unit_price) || 0,
+          userEmail,
+        );
+      }
+
       setBomModalOpen(false);
+      await loadItems();
       if (selectedId) await loadBom(selectedId);
     } catch (err) {
       setFormError(
@@ -253,6 +420,10 @@ export function ItemsPage() {
   };
 
   const selectedItem = items.find((i) => i.id === selectedId);
+  const showBomPanel =
+    selectedId != null &&
+    selectedItem != null &&
+    isAssyItem(selectedItem);
 
   return (
     <div>
@@ -292,6 +463,7 @@ export function ItemsPage() {
               <table className="data-table">
                 <thead>
                   <tr>
+                    <th style={{ width: 150 }}>구분</th>
                     <th>고객사</th>
                     <th>도번</th>
                     <th>품명</th>
@@ -307,15 +479,22 @@ export function ItemsPage() {
                     <tr
                       key={item.id}
                       className={selectedId === item.id ? 'selected' : ''}
-                      onClick={() => setSelectedId(item.id)}
+                      onClick={() => handleRowClick(item)}
+                      style={{ cursor: 'pointer' }}
                     >
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <ProductKindButtons
+                          value={getItemProductKind(item)}
+                          onChange={(kind) => handleKindChange(item, kind)}
+                        />
+                      </td>
                       <td>{item.customers?.customer_name ?? '-'}</td>
                       <td>{item.drawing_no ?? '-'}</td>
                       <td>{item.item_name}</td>
                       <td>{item.material ?? '-'}</td>
                       <td>{item.surface_treatment ?? '-'}</td>
                       <td>{item.item_type ?? '-'}</td>
-                      <td>{item.unit_price?.toLocaleString()}</td>
+                      <td>{formatNumber(item.unit_price)}</td>
                       <td onClick={(e) => e.stopPropagation()}>
                         <button
                           className="btn btn-secondary btn-sm"
@@ -339,7 +518,7 @@ export function ItemsPage() {
         </div>
       </div>
 
-      {selectedId && selectedItem && (
+      {showBomPanel && selectedItem && (
         <div className="detail-panel card">
           <div className="card-body">
             <div className="detail-panel-header">
@@ -385,7 +564,7 @@ export function ItemsPage() {
                         <td>{bom.item_type ?? '-'}</td>
                         <td>{bom.quantity}</td>
                         <td>{bom.total_quantity}</td>
-                        <td>{bom.unit_price?.toLocaleString()}</td>
+                        <td>{formatNumber(bom.unit_price)}</td>
                         <td>
                           <button
                             className="btn btn-secondary btn-sm"
@@ -428,6 +607,13 @@ export function ItemsPage() {
       >
         {formError && <div className="alert alert-error">{formError}</div>}
         <div className="form-grid cols-3">
+          <div className="form-group">
+            <label>구분</label>
+            <ProductKindButtons
+              value={(itemForm.level ?? '단품') as ItemProductKind}
+              onChange={(kind) => updateItemField('level', kind)}
+            />
+          </div>
           <CustomerCombobox
             id="item-customer"
             value={customerName}
@@ -440,6 +626,7 @@ export function ItemsPage() {
             <input
               value={itemForm.drawing_no ?? ''}
               onChange={(e) => updateItemField('drawing_no', e.target.value)}
+              onBlur={(e) => void applyDrawingLookupToItemForm(e.target.value)}
             />
           </div>
           <div className="form-group">
@@ -466,19 +653,12 @@ export function ItemsPage() {
             />
           </div>
           <div className="form-group">
-            <label>레벨</label>
-            <input
-              value={itemForm.level ?? ''}
-              onChange={(e) => updateItemField('level', e.target.value)}
-            />
-          </div>
-          <div className="form-group">
             <label>유형</label>
             <select
               value={itemForm.item_type ?? ''}
               onChange={(e) => updateItemField('item_type', e.target.value)}
             >
-              {ITEM_TYPES.map((t) => (
+              {ITEM_CATEGORY_TYPES.map((t) => (
                 <option key={t} value={t}>
                   {t}
                 </option>
@@ -487,28 +667,23 @@ export function ItemsPage() {
           </div>
           <div className="form-group">
             <label>소요량</label>
-            <input
-              type="number"
-              value={itemForm.quantity}
-              onChange={(e) => updateItemField('quantity', Number(e.target.value))}
+            <NumericInput
+              value={Number(itemForm.quantity)}
+              onChange={(n) => updateItemField('quantity', n)}
             />
           </div>
           <div className="form-group">
             <label>총소요량</label>
-            <input
-              type="number"
-              value={itemForm.total_quantity}
-              onChange={(e) =>
-                updateItemField('total_quantity', Number(e.target.value))
-              }
+            <NumericInput
+              value={Number(itemForm.total_quantity)}
+              onChange={(n) => updateItemField('total_quantity', n)}
             />
           </div>
           <div className="form-group">
             <label>단가</label>
-            <input
-              type="number"
-              value={itemForm.unit_price}
-              onChange={(e) => updateItemField('unit_price', Number(e.target.value))}
+            <NumericInput
+              value={Number(itemForm.unit_price)}
+              onChange={(n) => updateItemField('unit_price', n)}
             />
           </div>
           <div className="form-group full-width">
@@ -541,24 +716,30 @@ export function ItemsPage() {
         <div className="form-grid cols-3">
           <div className="form-group">
             <label>NO</label>
-            <input
-              type="number"
-              value={bomForm.no}
-              onChange={(e) => updateBomField('no', Number(e.target.value))}
+            <NumericInput
+              value={Number(bomForm.no)}
+              onChange={(n) => updateBomField('no', n)}
             />
           </div>
           <div className="form-group">
             <label>레벨</label>
-            <input
-              value={bomForm.level ?? ''}
+            <select
+              value={normalizeBomLevel(bomForm.level)}
               onChange={(e) => updateBomField('level', e.target.value)}
-            />
+            >
+              {BOM_LEVELS.map((lv) => (
+                <option key={lv} value={lv}>
+                  {lv}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="form-group">
             <label>도번</label>
             <input
               value={bomForm.drawing_no ?? ''}
               onChange={(e) => updateBomField('drawing_no', e.target.value)}
+              onBlur={(e) => void applyDrawingLookupToBomForm(e.target.value)}
             />
           </div>
           <div className="form-group">
@@ -599,28 +780,23 @@ export function ItemsPage() {
           </div>
           <div className="form-group">
             <label>소요량</label>
-            <input
-              type="number"
-              value={bomForm.quantity}
-              onChange={(e) => updateBomField('quantity', Number(e.target.value))}
+            <NumericInput
+              value={Number(bomForm.quantity)}
+              onChange={(n) => updateBomField('quantity', n)}
             />
           </div>
           <div className="form-group">
             <label>총소요량</label>
-            <input
-              type="number"
-              value={bomForm.total_quantity}
-              onChange={(e) =>
-                updateBomField('total_quantity', Number(e.target.value))
-              }
+            <NumericInput
+              value={Number(bomForm.total_quantity)}
+              onChange={(n) => updateBomField('total_quantity', n)}
             />
           </div>
           <div className="form-group">
             <label>단가</label>
-            <input
-              type="number"
-              value={bomForm.unit_price}
-              onChange={(e) => updateBomField('unit_price', Number(e.target.value))}
+            <NumericInput
+              value={Number(bomForm.unit_price)}
+              onChange={(n) => updateBomField('unit_price', n)}
             />
           </div>
           <div className="form-group full-width">

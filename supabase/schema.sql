@@ -114,6 +114,9 @@ CREATE TABLE IF NOT EXISTS orders (
   remaining_quantity NUMERIC DEFAULT 0,
   produced_quantity NUMERIC DEFAULT 0,
   defect_quantity NUMERIC DEFAULT 0,
+  seq_no TEXT,
+  vendor_unit_price NUMERIC DEFAULT 0,
+  vendor_amount NUMERIC DEFAULT 0,
   created_by TEXT,
   updated_by TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -163,6 +166,7 @@ CREATE TABLE IF NOT EXISTS work_orders (
   process_status TEXT DEFAULT '수주접수',
   instruction_memo TEXT,
   drawing_file_name TEXT,
+  print_count INTEGER NOT NULL DEFAULT 0,
   created_by TEXT,
   updated_by TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -260,6 +264,23 @@ CREATE TABLE IF NOT EXISTS company_settings (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS print_templates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  template_type TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  engine_type TEXT NOT NULL DEFAULT 'html',
+  storage_path TEXT,
+  mapping_json JSONB,
+  is_system_preset BOOLEAN DEFAULT FALSE,
+  is_default BOOLEAN DEFAULT FALSE,
+  layout_json JSONB NOT NULL DEFAULT '{"version":1,"pages":[]}'::jsonb,
+  created_by TEXT,
+  updated_by TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- 인덱스
 CREATE INDEX IF NOT EXISTS idx_customers_name ON customers(customer_name);
 CREATE INDEX IF NOT EXISTS idx_vendors_name ON vendors(vendor_name);
@@ -268,6 +289,7 @@ CREATE INDEX IF NOT EXISTS idx_bom_parent ON bom_items(parent_item_id);
 CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(order_status);
 CREATE INDEX IF NOT EXISTS idx_orders_due_date ON orders(due_date);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_seq_no ON orders(seq_no) WHERE seq_no IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_deliveries_date ON deliveries(delivery_date);
 CREATE INDEX IF NOT EXISTS idx_deliveries_order_no ON deliveries(order_no);
 CREATE INDEX IF NOT EXISTS idx_deliveries_customer ON deliveries(customer_id);
@@ -278,6 +300,8 @@ CREATE INDEX IF NOT EXISTS idx_work_orders_status ON work_orders(process_status)
 CREATE INDEX IF NOT EXISTS idx_process_logs_order ON process_logs(order_id);
 CREATE INDEX IF NOT EXISTS idx_production_logs_order ON production_logs(order_id);
 CREATE INDEX IF NOT EXISTS idx_production_logs_date ON production_logs(work_date);
+CREATE INDEX IF NOT EXISTS idx_print_templates_type ON print_templates(template_type);
+CREATE INDEX IF NOT EXISTS idx_print_templates_default ON print_templates(template_type, is_default);
 
 -- updated_at 자동 갱신 함수
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -318,6 +342,8 @@ CREATE TRIGGER tr_surface_treatments_updated BEFORE UPDATE ON surface_treatments
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER tr_company_settings_updated BEFORE UPDATE ON company_settings
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER tr_print_templates_updated BEFORE UPDATE ON print_templates
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- RLS 활성화
 ALTER TABLE users_profile ENABLE ROW LEVEL SECURITY;
@@ -336,6 +362,7 @@ ALTER TABLE defect_types ENABLE ROW LEVEL SECURITY;
 ALTER TABLE setup_types ENABLE ROW LEVEL SECURITY;
 ALTER TABLE surface_treatments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE company_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE print_templates ENABLE ROW LEVEL SECURITY;
 
 -- 인증된 사용자 전체 접근 정책 (1차 개발용)
 CREATE POLICY "Authenticated users full access" ON users_profile
@@ -369,4 +396,6 @@ CREATE POLICY "Authenticated users full access" ON setup_types
 CREATE POLICY "Authenticated users full access" ON surface_treatments
   FOR ALL TO authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Authenticated users full access" ON company_settings
+  FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Authenticated users full access" ON print_templates
   FOR ALL TO authenticated USING (true) WITH CHECK (true);

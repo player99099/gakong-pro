@@ -1,12 +1,19 @@
-import { NavLink } from 'react-router-dom';
-import { ROUTES, SIDEBAR_SECTIONS } from '../../lib/constants';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { NavIcon } from './NavIcon';
-
-const routeMap = new Map(ROUTES.map((r) => [r.path, r]));
+import { GNB_GROUPS } from '../../lib/constants';
 
 export function TopNav() {
-  const { userEmail, signOut } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { userEmail, signOut, skipAuth, devAuthError } = useAuth();
+
+  const activeGroup = GNB_GROUPS.find((g) =>
+    g.subRoutes.some((r) =>
+      r === '/'
+        ? location.pathname === '/'
+        : location.pathname.startsWith(r),
+    ),
+  )?.id;
 
   return (
     <header className="top-nav">
@@ -15,46 +22,40 @@ export function TopNav() {
         <span className="top-nav-brand-sub">금속가공 ERP</span>
       </div>
 
-      <nav className="top-nav-menu" aria-label="주 메뉴">
-        {SIDEBAR_SECTIONS.map((section, sectionIndex) => (
-          <div key={section.label} className="top-nav-section">
-            {sectionIndex > 0 && (
-              <span className="top-nav-divider" aria-hidden="true" />
-            )}
-            <span className="top-nav-section-label">{section.label}</span>
-            {section.paths.map((path) => {
-              const item = routeMap.get(path);
-              if (!item) return null;
-              return (
-                <NavLink
-                  key={item.path}
-                  to={item.path}
-                  end={item.path === '/'}
-                  className={({ isActive }) =>
-                    `top-nav-link${isActive ? ' active' : ''}`
-                  }
-                >
-                  <NavIcon name={item.icon} />
-                  <span>{item.label}</span>
-                </NavLink>
-              );
-            })}
+      <nav className="top-nav-gnb" aria-label="주 메뉴">
+        {GNB_GROUPS.map((group) => (
+          <div
+            key={group.id}
+            className={`gnb-item ${activeGroup === group.id ? 'active' : ''}`}
+            onClick={() => navigate(group.subRoutes[0])}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                navigate(group.subRoutes[0]);
+              }
+            }}
+            role="button"
+            tabIndex={0}
+          >
+            {group.label}
           </div>
         ))}
       </nav>
 
       <div className="top-nav-actions">
-        <span className="top-nav-version">v0.3 MVP</span>
+        {devAuthError && (
+          <span className="top-nav-dev-warn" title={devAuthError}>
+            로그인 실패
+          </span>
+        )}
         <span className="top-nav-user-pill" title={userEmail ?? undefined}>
-          {userEmail}
+          {skipAuth ? '개발 모드' : userEmail}
         </span>
-        <button
-          type="button"
-          className="btn btn-ghost btn-sm top-nav-logout"
-          onClick={() => signOut()}
-        >
-          로그아웃
-        </button>
+        {!skipAuth && (
+          <button type="button" className="top-nav-logout" onClick={() => signOut()}>
+            로그아웃
+          </button>
+        )}
       </div>
     </header>
   );

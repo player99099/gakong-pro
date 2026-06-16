@@ -1,7 +1,7 @@
 # 가공관리 Pro — 프로젝트 인수인계서
 
 > GPT 총감독 · 프로젝트 오너 · Cursor 개발자 공용 문서  
-> 최종 갱신: 2026-06-12 | 현재 단계: **1차 기본 틀 완료**
+> 최종 갱신: 2026-06-15 | 현재 단계: **2차 — 작업지시·공정이동표 Excel 출력 진행 중**
 
 ---
 
@@ -45,16 +45,30 @@ GPT → 오너: 검수 + 다음 지시
 | 환경변수 (`.env`) | ✅ 로컬 설정 완료 |
 | 테스트 로그인 계정 | ✅ `test@test.com` (비밀번호는 별도 관리) |
 | 로컬 실행 | `npm run dev` → http://localhost:5173/ |
-| 연결 점검 | `node scripts/check-supabase.mjs` |
+| 연결 점검 | `npm run db:check` |
+| Git 원격 | `https://github.com/player99099/gakong-pro.git` (branch: `main`) |
 
 ### 환경변수 (`.env`)
 
 ```
 VITE_SUPABASE_URL=https://myhujwvcrdzamsxwxeff.supabase.co
-VITE_SUPABASE_ANON_KEY=sb_publishable_...  (프론트용 공개 키)
+VITE_SUPABASE_ANON_KEY=...  (프론트용 publishable/anon 키)
+VITE_SKIP_AUTH=true         # 로컬 개발용 (배포 시 false)
 ```
 
-> `service_role` 키, DB 비밀번호는 절대 Git/채팅에 올리지 않음.
+> `.env`는 Git에 올리지 않음. `service_role` 키, DB 비밀번호도 절대 Git/채팅에 올리지 않음.
+
+### DB 마이그레이션 (Supabase SQL Editor)
+
+코드만 pull해도 DB는 자동 갱신되지 않음. 아래 파일을 **프로젝트당 1회** 적용:
+
+| 파일 | 내용 |
+|------|------|
+| `006_print_templates.sql` | 출력 양식 테이블 |
+| `007_print_templates_excel.sql` | Excel 엔진 컬럼 |
+| `008_work_orders_print_count.sql` | 작업지시 출력횟수 |
+
+Storage: 버킷 `print-templates` (사용자 업로드 Excel 양식용, public)
 
 ---
 
@@ -256,3 +270,58 @@ gakong-pro/
 - `docs/GPT-DIRECTOR-BRIEF.md` — GPT 첫 대화용 짧은 브리핑 (복사 붙여넣기)
 - `docs/COMMUNICATION-GUIDE.md` — 3자 소통 가이드
 - `.cursor/rules/gakong-pro.mdc` — Cursor 자동 적용 개발 규칙
+
+---
+
+## 13. 집 · 회사 PC 왔다갔다 작업 절차
+
+### 구조
+
+| 저장소 | 내용 |
+|--------|------|
+| **GitHub** (`origin/main`) | 코드, `supabase/migrations/`, `public/templates/` Excel 양식 |
+| **Supabase (클라우드)** | DB·Auth·Storage — PC와 무관하게 동일 |
+| **각 PC `.env`** | Supabase URL/키 — Git 제외, PC마다 1회 설정 |
+
+### 새 PC에서 최초 1회
+
+```bash
+git clone https://github.com/player99099/gakong-pro.git
+cd gakong-pro
+npm run setup          # npm install + .env 생성 + db:check
+# .env 를 열어 anon key 등 입력 (다른 PC와 동일 값)
+npm run dev
+```
+
+Cursor는 **고정 경로**에 clone 권장 (예: `C:\dev\gakong-pro`). 임시 Temp 폴더보다 관리가 쉽습니다.
+
+### 매일 — **나갈 때** (회사 → 집 / 집 → 회사)
+
+```bash
+git status
+git add -A
+git commit -m "작업 내용 요약"
+git push origin main
+```
+
+### 매일 — **도착했을 때**
+
+```bash
+git pull origin main
+npm install            # package.json 변경 시에만
+npm run dev
+```
+
+### 주의
+
+1. **커밋 안 한 변경**은 다른 PC에서 보이지 않음 → 자리 바꾸기 전 **push** 습관
+2. **DB 스키마**는 `git pull`만으로 안 바뀜 → 새 migration 추가 시 Supabase SQL Editor에서 1회 실행
+3. **`.env`**는 비밀번호 관리앱 등으로 집·회사 동기화 (Git 금지)
+4. **Excel 기본 양식**은 `public/templates/process-traveler-default.xlsx` — Git에 포함
+
+### 연결 확인
+
+```bash
+npm run db:check
+npm run db:auth-check   # 로그인 테스트 (VITE_SKIP_AUTH=false 일 때)
+```

@@ -1,18 +1,41 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { resolveWorkOrderPageError } from '../lib/formatAppError';
 import { PROCESS_STATUSES } from '../lib/constants';
+import { formatNumber } from '../lib/formatNumber';
+import {
+  mergeDisplayOrder,
+  mergeSelectedOrderIntoDisplay,
+  reorderIds,
+  sortByIdOrder,
+  sortSelectedByDisplayOrder,
+} from '../lib/reorderIds';
+import { useDragReorder } from '../hooks/useDragReorder';
 import {
   createWorkOrderFromOrder,
   deleteWorkOrder,
   fetchOrdersWithoutWorkOrder,
-  fetchWorkOrderById,
+  fetchWorkOrderPrintData,
   fetchWorkOrders,
   fetchWorkOrderStats,
-  updateWorkOrder,
+  incrementWorkOrderPrintCounts,
 } from '../services/workOrders';
+import { getDefaultPrintTemplate, isExcelPrintTemplate } from '../services/printTemplates';
+import { buildProcessTravelerContext } from '../lib/print/resolveBindValue';
+import { downloadBlob } from '../lib/downloadBlob';
+import {
+  buildBatchTravelerFilename,
+  buildTravelerFilename,
+  EXCEL_BATCH_PRINT_GUIDE,
+  EXCEL_PRINT_GUIDE,
+  fillExcelBatchToBlob,
+  fillExcelTemplateToBlob,
+} from '../services/excelTemplateFill';
+import { PrintPreviewModal } from '../components/print/PrintPreviewModal';
+import { WorkOrderPrintOrderModal } from '../components/WorkOrderPrintOrderModal';
+import type { PrintContext, PrintLayout } from '../types/printTemplate';
 import type {
   Order,
-  ProcessStatus,
   WorkOrder,
   WorkOrderSearchParams,
   WorkOrderStats,
@@ -30,33 +53,29 @@ const emptySearch: WorkOrderSearchParams = {
   dueDateTo: '',
 };
 
-interface EditForm {
-  instruction_memo: string;
-  drawing_file_name: string;
-  process_status: ProcessStatus;
-}
-
 export function WorkOrdersPage() {
   const { userEmail } = useAuth();
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [stats, setStats] = useState<WorkOrderStats | null>(null);
   const [searchParams, setSearchParams] = useState<WorkOrderSearchParams>(emptySearch);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedOrder, setSelectedOrder] = useState<string[]>([]);
+  const [displayOrder, setDisplayOrder] = useState<string[]>([]);
   const [createModalOpen, setCreateModalOpen] = useState(false);
-  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [printOrderModalOpen, setPrintOrderModalOpen] = useState(false);
   const [ordersWithoutWo, setOrdersWithoutWo] = useState<Order[]>([]);
-  const [editing, setEditing] = useState<WorkOrder | null>(null);
-  const [editForm, setEditForm] = useState<EditForm>({
-    instruction_memo: '',
-    drawing_file_name: '',
-    process_status: '수주접수',
-  });
   const [formError, setFormError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [exportingId, setExportingId] = useState<string | null>(null);
+  const [batchPrinting, setBatchPrinting] = useState(false);
+  const [printOpen, setPrintOpen] = useState(false);
+  const [printLayout, setPrintLayout] = useState<PrintLayout | null>(null);
+  const [printContext, setPrintContext] = useState<PrintContext>({});
+  const [printTitle, setPrintTitle] = useState('공정이동표');
+  const [printCountPendingId, setPrintCountPendingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -70,7 +89,7 @@ export function WorkOrdersPage() {
       setError('');
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : '작업지시 목록을 불러오지 못했습니다.',
+        resolveWorkOrderPageError(err, '작업지시 목록을 불러오지 못했습니다.'),
       );
     } finally {
       setLoading(false);
@@ -81,6 +100,57 @@ export function WorkOrdersPage() {
     load();
   }, [load]);
 
+  const { bindRow: bindDisplayRow } = useDragReorder(loading);
+
+  const sortedWorkOrders = useMemo(
+    () => sortByIdOrder(workOrders, displayOrder),
+    [workOrders, displayOrder],
+  );
+
+  useEffect(() => {
+    setDisplayOrder((prev) => mergeDisplayOrder(prev, workOrders.map((wo) => wo.id)));
+  }, [workOrders]);
+
+  const allVisibleSelected =
+    sortedWorkOrders.length > 0 &&
+    sortedWorkOrders.every((wo) => selectedOrder.includes(wo.id));
+
+  const handleDisplayReorder = (fromIndex: number, toIndex: number) => {
+    setDisplayOrder((prev) => {
+      const next = reorderIds(prev, fromIndex, toIndex);
+      setSelectedOrder((selected) => sortSelectedByDisplayOrder(next, selected));
+      return next;
+    });
+  };
+
+  const handleSelectedOrderChange = (ids: string[]) => {
+    setSelectedOrder(ids);
+    setDisplayOrder((prev) => mergeSelectedOrderIntoDisplay(prev, ids));
+  };
+
+  const toggleSelect = (id: string, checked: boolean) => {
+    setSelectedOrder((prev) => {
+      if (checked) {
+        const next = prev.includes(id) ? prev : [...prev, id];
+        return sortSelectedByDisplayOrder(displayOrder, next);
+      }
+      return prev.filter((x) => x !== id);
+    });
+  };
+
+  const toggleSelectAll = () => {
+    const visibleIds = new Set(sortedWorkOrders.map((w) => w.id));
+    if (allVisibleSelected) {
+      setSelectedOrder((prev) => prev.filter((id) => !visibleIds.has(id)));
+      return;
+    }
+    setSelectedOrder((prev) => {
+      const outside = prev.filter((id) => !visibleIds.has(id));
+      const visible = displayOrder.filter((id) => visibleIds.has(id));
+      return [...outside, ...visible];
+    });
+  };
+
   const openCreateModal = async () => {
     setFormError('');
     setCreateModalOpen(true);
@@ -89,7 +159,7 @@ export function WorkOrdersPage() {
       setOrdersWithoutWo(orders);
     } catch (err) {
       setFormError(
-        err instanceof Error ? err.message : '수주 목록을 불러오지 못했습니다.',
+        resolveWorkOrderPageError(err, '수주 목록을 불러오지 못했습니다.'),
       );
     }
   };
@@ -104,54 +174,10 @@ export function WorkOrdersPage() {
       await load();
     } catch (err) {
       setFormError(
-        err instanceof Error ? err.message : '작업지시 생성에 실패했습니다.',
+        resolveWorkOrderPageError(err, '작업지시 생성에 실패했습니다.'),
       );
     } finally {
       setCreating(false);
-    }
-  };
-
-  const openEdit = async (wo: WorkOrder) => {
-    setEditing(wo);
-    setFormError('');
-    setEditModalOpen(true);
-    try {
-      const full = await fetchWorkOrderById(wo.id);
-      setEditForm({
-        instruction_memo: full.instruction_memo ?? '',
-        drawing_file_name: full.drawing_file_name ?? '',
-        process_status: full.process_status,
-      });
-    } catch (err) {
-      setFormError(
-        err instanceof Error ? err.message : '작업지시 정보를 불러오지 못했습니다.',
-      );
-    }
-  };
-
-  const handleSave = async () => {
-    if (!editing) return;
-    setSaving(true);
-    setFormError('');
-    try {
-      await updateWorkOrder(
-        editing.id,
-        {
-          instruction_memo: editForm.instruction_memo || null,
-          drawing_file_name: editForm.drawing_file_name || null,
-          process_status: editForm.process_status,
-        },
-        userEmail,
-      );
-      setSuccessMsg('작업지시가 수정되었습니다.');
-      setEditModalOpen(false);
-      await load();
-    } catch (err) {
-      setFormError(
-        err instanceof Error ? err.message : '저장에 실패했습니다.',
-      );
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -161,6 +187,8 @@ export function WorkOrdersPage() {
       await deleteWorkOrder(id);
       setSuccessMsg('작업지시가 삭제되었습니다.');
       if (selectedId === id) setSelectedId(null);
+      setSelectedOrder((prev) => prev.filter((x) => x !== id));
+      setDisplayOrder((prev) => prev.filter((x) => x !== id));
       await load();
     } catch (err) {
       setError(
@@ -169,8 +197,97 @@ export function WorkOrdersPage() {
     }
   };
 
-  const handlePrint = () => {
-    alert('출력 기능은 다음 단계에서 구현 예정입니다.');
+  const markPrinted = async (ids: string[]) => {
+    await incrementWorkOrderPrintCounts(ids, userEmail);
+    await load();
+  };
+
+  const handlePrint = async (wo: WorkOrder) => {
+    setExportingId(wo.id);
+    setError('');
+    try {
+      const [printData, template] = await Promise.all([
+        fetchWorkOrderPrintData(wo.id),
+        getDefaultPrintTemplate('process_traveler'),
+      ]);
+      const context = buildProcessTravelerContext({
+        ...printData,
+        process_status: wo.process_status,
+      });
+
+      if (!isExcelPrintTemplate(template)) {
+        setPrintCountPendingId(wo.id);
+        setPrintOpen(true);
+        setPrintLayout(template.layout_json);
+        setPrintContext(context);
+        setPrintTitle(`공정이동표 — ${wo.drawing_no ?? wo.order_no ?? ''}`);
+        return;
+      }
+
+      const blob = await fillExcelTemplateToBlob(template, context);
+      downloadBlob(blob, `${buildTravelerFilename(context)}.xlsx`);
+      await markPrinted([wo.id]);
+      alert(EXCEL_PRINT_GUIDE);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : '공정이동표 출력에 실패했습니다.';
+      setError(message);
+      alert(message);
+    } finally {
+      setExportingId(null);
+    }
+  };
+
+  const handlePrintPreviewClose = () => {
+    setPrintOpen(false);
+    setPrintCountPendingId(null);
+  };
+
+  const openBatchPrint = () => {
+    if (selectedOrder.length === 0) return;
+    setPrintOrderModalOpen(true);
+  };
+
+  const handleBatchPrintConfirm = async () => {
+    if (selectedOrder.length === 0) return;
+    setBatchPrinting(true);
+    setError('');
+    try {
+      const template = await getDefaultPrintTemplate('process_traveler');
+      if (!isExcelPrintTemplate(template)) {
+        alert('일괄 출력은 Excel 양식만 지원합니다.');
+        return;
+      }
+
+      const byId = new Map(workOrders.map((wo) => [wo.id, wo]));
+      const orderedIds = selectedOrder.filter((id) => byId.has(id));
+      const contexts: PrintContext[] = [];
+
+      for (const id of orderedIds) {
+        const wo = byId.get(id)!;
+        const printData = await fetchWorkOrderPrintData(id);
+        contexts.push(
+          buildProcessTravelerContext({
+            ...printData,
+            process_status: wo.process_status,
+          }),
+        );
+      }
+
+      const blob = await fillExcelBatchToBlob(template, contexts);
+      downloadBlob(blob, `${buildBatchTravelerFilename(orderedIds.length)}.xlsx`);
+      await markPrinted(orderedIds);
+      alert(EXCEL_BATCH_PRINT_GUIDE);
+      setPrintOrderModalOpen(false);
+      setSelectedOrder([]);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : '일괄 출력 준비에 실패했습니다.';
+      setError(message);
+      alert(message);
+    } finally {
+      setBatchPrinting(false);
+    }
   };
 
   const updateSearch = (field: keyof WorkOrderSearchParams, value: string) => {
@@ -182,13 +299,28 @@ export function WorkOrdersPage() {
       <div className="page-header">
         <h1 className="page-title">작업지시</h1>
         <div className="page-actions">
+          <button
+            className="btn btn-secondary"
+            onClick={openBatchPrint}
+            disabled={selectedOrder.length === 0}
+            title={selectedOrder.length === 0 ? '출력할 항목을 체크하세요' : undefined}
+          >
+            선택 출력{selectedOrder.length > 0 ? ` (${selectedOrder.length})` : ''}
+          </button>
           <button className="btn btn-primary" onClick={openCreateModal}>
             + 수주에서 작업지시 생성
           </button>
         </div>
       </div>
 
-      {error && <div className="alert alert-error">{error}</div>}
+      {error && (
+        <div className="alert alert-error" role="alert">
+          <span className="alert-icon">!</span>
+          <span className="alert-text" style={{ whiteSpace: 'pre-wrap' }}>
+            {error}
+          </span>
+        </div>
+      )}
       {successMsg && (
         <div className="alert alert-success">{successMsg}</div>
       )}
@@ -199,27 +331,27 @@ export function WorkOrdersPage() {
       >
         <div className="stat-card primary">
           <div className="stat-label">전체</div>
-          <div className="stat-value">{stats?.total ?? 0}</div>
+          <div className="stat-value">{formatNumber(stats?.total ?? 0)}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">도면배포</div>
-          <div className="stat-value">{stats?.drawingDeploy ?? 0}</div>
+          <div className="stat-value">{formatNumber(stats?.drawingDeploy ?? 0)}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">생산</div>
-          <div className="stat-value">{stats?.production ?? 0}</div>
+          <div className="stat-value">{formatNumber(stats?.production ?? 0)}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">후처리</div>
-          <div className="stat-value">{stats?.postProcess ?? 0}</div>
+          <div className="stat-value">{formatNumber(stats?.postProcess ?? 0)}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">출하검사</div>
-          <div className="stat-value">{stats?.shipInspect ?? 0}</div>
+          <div className="stat-value">{formatNumber(stats?.shipInspect ?? 0)}</div>
         </div>
         <div className="stat-card warning">
           <div className="stat-label">출하대기</div>
-          <div className="stat-value">{stats?.readyToShip ?? 0}</div>
+          <div className="stat-value">{formatNumber(stats?.readyToShip ?? 0)}</div>
         </div>
       </div>
 
@@ -282,6 +414,11 @@ export function WorkOrdersPage() {
       </div>
 
       <div className="card">
+        {!loading && workOrders.length > 0 && (
+          <div className="card-hint" style={{ padding: '10px 16px', fontSize: 13, color: 'var(--text-muted)' }}>
+            ≡ 드래그로 출력 순서를 정한 뒤 체크하고 「선택 출력」하세요. 모달에서도 순서를 다시 조정할 수 있습니다.
+          </div>
+        )}
         <div className="card-body" style={{ padding: 0 }}>
           {loading ? (
             <div className="loading-spinner">로딩 중...</div>
@@ -289,9 +426,19 @@ export function WorkOrdersPage() {
             <EmptyState message="등록된 작업지시가 없습니다." />
           ) : (
             <div className="table-wrapper">
-              <table className="data-table">
+              <table className="data-table print-order-table">
                 <thead>
                   <tr>
+                    <th style={{ width: 36 }} aria-label="순서 변경" />
+                    <th style={{ width: 40 }}>
+                      <input
+                        type="checkbox"
+                        checked={allVisibleSelected}
+                        onChange={toggleSelectAll}
+                        title="현재 목록 전체 선택"
+                      />
+                    </th>
+                    <th style={{ width: 52 }}>출력순</th>
                     <th>공정상태</th>
                     <th>고객사</th>
                     <th>발주번호</th>
@@ -299,18 +446,41 @@ export function WorkOrdersPage() {
                     <th>품명</th>
                     <th>수량</th>
                     <th>납기일</th>
+                    <th>출력횟수</th>
                     <th>지시메모</th>
                     <th>도면파일명</th>
                     <th>관리</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {workOrders.map((wo) => (
+                  {sortedWorkOrders.map((wo, index) => {
+                    const printOrderIndex = selectedOrder.indexOf(wo.id);
+                    const { className: dragClassName, ...dragRowProps } = bindDisplayRow(
+                      index,
+                      handleDisplayReorder,
+                    );
+                    return (
                     <tr
                       key={wo.id}
-                      className={selectedId === wo.id ? 'selected' : ''}
+                      {...dragRowProps}
+                      className={[dragClassName, selectedId === wo.id ? 'selected' : '']
+                        .filter(Boolean)
+                        .join(' ')}
                       onClick={() => setSelectedId(wo.id)}
                     >
+                      <td className="print-order-handle" title="드래그하여 순서 변경">
+                        <span aria-hidden="true">≡</span>
+                      </td>
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedOrder.includes(wo.id)}
+                          onChange={(e) => toggleSelect(wo.id, e.target.checked)}
+                        />
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                        {printOrderIndex >= 0 ? printOrderIndex + 1 : '-'}
+                      </td>
                       <td>
                         <ProcessStatusBadge status={wo.process_status} />
                       </td>
@@ -318,17 +488,12 @@ export function WorkOrdersPage() {
                       <td>{wo.order_no ?? '-'}</td>
                       <td>{wo.drawing_no ?? '-'}</td>
                       <td>{wo.item_name ?? '-'}</td>
-                      <td>{wo.order_quantity}</td>
+                      <td>{formatNumber(wo.order_quantity)}</td>
                       <td>{wo.due_date ?? '-'}</td>
+                      <td>{formatNumber(wo.print_count ?? 0)}</td>
                       <td>{wo.instruction_memo ?? '-'}</td>
                       <td>{wo.drawing_file_name ?? '-'}</td>
                       <td onClick={(e) => e.stopPropagation()}>
-                        <button
-                          className="btn btn-secondary btn-sm"
-                          onClick={() => openEdit(wo)}
-                        >
-                          수정
-                        </button>{' '}
                         <button
                           className="btn btn-danger btn-sm"
                           onClick={() => handleDelete(wo.id)}
@@ -337,13 +502,15 @@ export function WorkOrdersPage() {
                         </button>{' '}
                         <button
                           className="btn btn-secondary btn-sm"
-                          onClick={handlePrint}
+                          disabled={exportingId === wo.id}
+                          onClick={() => void handlePrint(wo)}
                         >
-                          공정이동표 출력
+                          {exportingId === wo.id ? '출력 준비…' : '공정이동표 출력'}
                         </button>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -365,8 +532,15 @@ export function WorkOrdersPage() {
           </button>
         }
       >
-        {formError && <div className="alert alert-error">{formError}</div>}
-        {ordersWithoutWo.length === 0 ? (
+        {formError && (
+          <div className="alert alert-error" role="alert">
+            <span className="alert-icon">!</span>
+            <span className="alert-text" style={{ whiteSpace: 'pre-wrap' }}>
+              {formError}
+            </span>
+          </div>
+        )}
+        {formError ? null : ordersWithoutWo.length === 0 ? (
           <EmptyState
             message="작업지시를 생성할 수주가 없습니다."
             subMessage="모든 수주에 작업지시가 이미 생성되었거나 취소된 수주만 있습니다."
@@ -393,7 +567,7 @@ export function WorkOrdersPage() {
                     <td>{order.order_no ?? '-'}</td>
                     <td>{order.drawing_no ?? '-'}</td>
                     <td>{order.item_name ?? '-'}</td>
-                    <td>{order.order_quantity}</td>
+                    <td>{formatNumber(order.order_quantity)}</td>
                     <td>{order.due_date ?? '-'}</td>
                     <td>
                       <ProcessStatusBadge status={order.process_status} />
@@ -415,74 +589,29 @@ export function WorkOrdersPage() {
         )}
       </Modal>
 
-      <Modal
-        title="작업지시 수정"
-        open={editModalOpen}
-        onClose={() => setEditModalOpen(false)}
-        footer={
-          <>
-            <button
-              className="btn btn-secondary"
-              onClick={() => setEditModalOpen(false)}
-            >
-              취소
-            </button>
-            <button
-              className="btn btn-primary"
-              onClick={handleSave}
-              disabled={saving}
-            >
-              {saving ? '저장 중...' : '저장'}
-            </button>
-          </>
+      <WorkOrderPrintOrderModal
+        open={printOrderModalOpen}
+        orderIds={selectedOrder}
+        workOrders={workOrders}
+        printing={batchPrinting}
+        onClose={() => setPrintOrderModalOpen(false)}
+        onOrderChange={handleSelectedOrderChange}
+        onConfirm={() => void handleBatchPrintConfirm()}
+      />
+
+      <PrintPreviewModal
+        open={printOpen}
+        onClose={handlePrintPreviewClose}
+        title={printTitle}
+        layout={printLayout ?? { version: 1, pages: [] }}
+        context={printContext}
+        loading={!printLayout}
+        onPrinted={
+          printCountPendingId
+            ? () => void markPrinted([printCountPendingId])
+            : undefined
         }
-      >
-        {formError && <div className="alert alert-error">{formError}</div>}
-        <div className="form-grid cols-2">
-          <div className="form-group">
-            <label>공정상태</label>
-            <select
-              value={editForm.process_status}
-              onChange={(e) =>
-                setEditForm((prev) => ({
-                  ...prev,
-                  process_status: e.target.value as ProcessStatus,
-                }))
-              }
-            >
-              {PROCESS_STATUSES.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="form-group">
-            <label>도면파일명</label>
-            <input
-              value={editForm.drawing_file_name}
-              onChange={(e) =>
-                setEditForm((prev) => ({
-                  ...prev,
-                  drawing_file_name: e.target.value,
-                }))
-              }
-            />
-          </div>
-          <div className="form-group full-width">
-            <label>지시메모</label>
-            <textarea
-              value={editForm.instruction_memo}
-              onChange={(e) =>
-                setEditForm((prev) => ({
-                  ...prev,
-                  instruction_memo: e.target.value,
-                }))
-              }
-            />
-          </div>
-        </div>
-      </Modal>
+      />
     </div>
   );
 }

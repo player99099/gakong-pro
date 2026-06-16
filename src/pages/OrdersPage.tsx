@@ -3,51 +3,50 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type Dispatch,
-  type ReactNode,
   type SetStateAction,
 } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { ORDER_STATUSES, PROCESS_STATUSES } from '../lib/constants';
+import { useUnitPriceChoice } from '../hooks/useUnitPriceChoice';
+import { ORDER_MANUAL_STATUSES, ORDER_STATUSES } from '../lib/constants';
+import { excelRowToOrderFields } from '../lib/excelMapping';
+import { formatTechnicalError } from '../lib/formatAppError';
+import { formatNumber } from '../lib/formatNumber';
+import { normalizeUnitPrice } from '../lib/orderUnitPrice';
+import { resolveDrawingUnitPrice } from '../lib/resolveDrawingUnitPrice';
+import {
+  emptyOrderForm,
+  orderToForm,
+  patchForm,
+} from '../lib/orderForm';
+import { lookupSeqInReferenceExcel } from '../lib/excelSeqLookup';
+import { createDefaultBomIfEmpty } from '../services/bomService';
 import { fetchCustomers, findOrCreateCustomer } from '../services/customers';
-import { fetchItems, lookupByDrawingNo } from '../services/items';
+import {
+  fetchItems,
+  lookupBomByDrawingNo,
+  lookupByDrawingNo,
+  syncBomFieldsByDrawingNo,
+  upsertItemFromOrder,
+  type DrawingCandidate,
+} from '../services/items';
 import {
   createOrder,
   deleteOrder,
   fetchOrders,
+  getOrderBySeqNo,
   updateOrder,
+  updateOrderStatus,
   type OrderInput,
 } from '../services/orders';
-import type { Customer, Item, Order, OrderSearchParams } from '../types';
-import { OrderStatusBadge, ProcessStatusBadge } from '../components/ui/Badge';
-
-const emptyForm = (): OrderInput => ({
-  customer_id: null,
-  order_no: '',
-  received_date: new Date().toISOString().split('T')[0],
-  due_date: '',
-  item_id: null,
-  drawing_no: '',
-  item_name: '',
-  material: '',
-  order_quantity: 0,
-  unit_price: 0,
-  total_amount: 0,
-  surface_treatment: '',
-  project_name: '',
-  person_in_charge: '',
-  progress_place: '',
-  drawing_file_name: '',
-  memo1: '',
-  memo2: '',
-  order_status: '접수',
-  process_status: '수주접수',
-  delivered_quantity: 0,
-  remaining_quantity: 0,
-  produced_quantity: 0,
-  defect_quantity: 0,
-});
+import type { Customer, Item, Order, OrderSearchParams, OrderStatus } from '../types';
+import { ExcelFormatSetupModal } from '../components/orders/ExcelFormatSetupModal';
+import { ExcelUploadModal } from '../components/orders/ExcelUploadModal';
+import { OrderFormModal } from '../components/orders/OrderFormModal';
+import { OrderFormFields } from '../components/orders/OrderFormFields';
+import { SeqNoActionModal } from '../components/orders/SeqNoActionModal';
 
 const emptySearch: OrderSearchParams = {
   customerName: '',
@@ -71,8 +70,7 @@ type SortField =
   | 'person_in_charge'
   | 'progress_place'
   | 'total_amount'
-  | 'order_status'
-  | 'process_status';
+  | 'order_status';
 
 type SortState = { field: SortField; direction: 'asc' | 'desc' };
 
@@ -89,60 +87,7 @@ const SORT_LABELS: Record<SortField, string> = {
   progress_place: '진행처',
   total_amount: '금액',
   order_status: '상태',
-  process_status: '공정',
 };
-
-function formatItemLabel(item: Pick<Item, 'drawing_no' | 'item_name'>) {
-  return item.drawing_no
-    ? `${item.drawing_no} - ${item.item_name}`
-    : item.item_name;
-}
-
-function formatLinkedItem(
-  itemId: string | null,
-  items: Item[],
-  fallback?: { drawing_no?: string | null; item_name?: string | null },
-) {
-  if (itemId) {
-    const item = items.find((i) => i.id === itemId);
-    if (item) return formatItemLabel(item);
-  }
-  if (fallback?.item_name || fallback?.drawing_no) {
-    return fallback.drawing_no
-      ? `${fallback.drawing_no} - ${fallback.item_name ?? ''}`
-      : (fallback.item_name ?? '-');
-  }
-  return '-';
-}
-
-function orderToForm(order: Order): OrderInput {
-  return {
-    customer_id: order.customer_id,
-    order_no: order.order_no ?? '',
-    received_date: order.received_date ?? '',
-    due_date: order.due_date ?? '',
-    item_id: order.item_id,
-    drawing_no: order.drawing_no ?? '',
-    item_name: order.item_name ?? '',
-    material: order.material ?? '',
-    order_quantity: order.order_quantity,
-    unit_price: order.unit_price,
-    total_amount: order.total_amount,
-    surface_treatment: order.surface_treatment ?? '',
-    project_name: order.project_name ?? '',
-    person_in_charge: order.person_in_charge ?? '',
-    progress_place: order.progress_place ?? '',
-    drawing_file_name: order.drawing_file_name ?? '',
-    memo1: order.memo1 ?? '',
-    memo2: order.memo2 ?? '',
-    order_status: order.order_status,
-    process_status: order.process_status,
-    delivered_quantity: order.delivered_quantity,
-    remaining_quantity: order.remaining_quantity,
-    produced_quantity: order.produced_quantity ?? 0,
-    defect_quantity: order.defect_quantity ?? 0,
-  };
-}
 
 function sortOrders(list: Order[], sort: SortState): Order[] {
   const dir = sort.direction === 'asc' ? 1 : -1;
@@ -173,8 +118,6 @@ function sortOrders(list: Order[], sort: SortState): Order[] {
           return Number(o.total_amount);
         case 'order_status':
           return o.order_status;
-        case 'process_status':
-          return o.process_status;
         default:
           return '';
       }
@@ -187,23 +130,9 @@ function sortOrders(list: Order[], sort: SortState): Order[] {
   });
 }
 
-function patchForm(
-  prev: OrderInput,
-  field: keyof OrderInput,
-  value: string | number | null,
-): OrderInput {
-  const next = { ...prev, [field]: value };
-  if (field === 'order_quantity' || field === 'unit_price') {
-    const qty = field === 'order_quantity' ? Number(value) : prev.order_quantity;
-    const price = field === 'unit_price' ? Number(value) : prev.unit_price;
-    next.total_amount = qty * price;
-    next.remaining_quantity = qty - (prev.delivered_quantity || 0);
-  }
-  return next;
-}
-
 export function OrdersPage() {
   const { userEmail } = useAuth();
+  const unitPriceChoice = useUnitPriceChoice();
   const [orders, setOrders] = useState<Order[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [items, setItems] = useState<Item[]>([]);
@@ -214,14 +143,97 @@ export function OrdersPage() {
   });
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [newForm, setNewForm] = useState<OrderInput>(emptyForm);
+  const [newForm, setNewForm] = useState<OrderInput>(emptyOrderForm());
   const [newCustomerName, setNewCustomerName] = useState('');
-  const [editForm, setEditForm] = useState<OrderInput>(emptyForm());
+  const [editForm, setEditForm] = useState<OrderInput>(emptyOrderForm());
   const [editCustomerName, setEditCustomerName] = useState('');
+  const [createOpen, setCreateOpen] = useState(false);
+  const [seqModalOpen, setSeqModalOpen] = useState(false);
   const [formError, setFormError] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [excelModalOpen, setExcelModalOpen] = useState(false);
+  const [excelFormatModalOpen, setExcelFormatModalOpen] = useState(false);
+  const [seqLookupLoading, setSeqLookupLoading] = useState(false);
+  const [statusUpdatingId, setStatusUpdatingId] = useState<string | null>(null);
+  /** 도번+단가 조합에 대해 단가 선택 모달을 이미 확인했는지 */
+  const priceConfirmedRef = useRef<string | null>(null);
+
+  const priceConfirmKey = (drawingNo: string, unitPrice: number) =>
+    `${drawingNo.trim().toUpperCase()}:${normalizeUnitPrice(unitPrice)}`;
+
+  const markPriceConfirmed = (drawingNo: string, unitPrice: number) => {
+    priceConfirmedRef.current = priceConfirmKey(drawingNo, unitPrice);
+  };
+
+  const isPriceConfirmed = (drawingNo: string, unitPrice: number) =>
+    priceConfirmedRef.current === priceConfirmKey(drawingNo, unitPrice);
+
+  /** 도번 기준 BOM 단가와 수주 단가 불일치 시 즉시 선택 모달 */
+  const resolveFormUnitPrice = useCallback(
+    async (
+      drawingNo: string,
+      orderUnitPrice: number,
+      orderQty: number,
+      setForm: Dispatch<SetStateAction<OrderInput>>,
+    ) => {
+      const trimmed = drawingNo.trim();
+      if (!trimmed) return;
+
+      const resolved = await resolveDrawingUnitPrice(
+        trimmed,
+        orderUnitPrice,
+        orderQty,
+        (orderPrice, refPrice) =>
+          unitPriceChoice.prompt(orderPrice, refPrice, trimmed, 'bom'),
+      );
+
+      if (resolved.cancelled) return;
+
+      markPriceConfirmed(trimmed, resolved.unitPrice);
+      setForm((prev) => ({
+        ...patchForm(prev, 'unit_price', resolved.unitPrice),
+        total_amount: resolved.totalAmount,
+      }));
+    },
+    [unitPriceChoice.prompt],
+  );
+
+  /** 저장 직전 — 단가 불일치 시 모달(이미 확인한 조합은 생략) */
+  const ensureFormUnitPriceBeforeSave = useCallback(
+    async (
+      form: OrderInput,
+      setForm: Dispatch<SetStateAction<OrderInput>>,
+    ): Promise<OrderInput | null> => {
+      const trimmed = form.drawing_no?.trim() ?? '';
+      if (!trimmed) return form;
+
+      const orderPrice = normalizeUnitPrice(form.unit_price);
+      if (isPriceConfirmed(trimmed, orderPrice)) return form;
+
+      const resolved = await resolveDrawingUnitPrice(
+        trimmed,
+        orderPrice,
+        form.order_quantity,
+        (op, refPrice) =>
+          unitPriceChoice.prompt(op, refPrice, trimmed, 'bom'),
+      );
+
+      if (resolved.cancelled) return null;
+      if (resolved.skipped) return form;
+
+      const next: OrderInput = {
+        ...form,
+        unit_price: resolved.unitPrice,
+        total_amount: resolved.totalAmount,
+      };
+      markPriceConfirmed(trimmed, resolved.unitPrice);
+      setForm(next);
+      return next;
+    },
+    [unitPriceChoice.prompt],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -258,8 +270,19 @@ export function OrdersPage() {
   };
 
   const resetNewRow = () => {
-    setNewForm(emptyForm());
+    setNewForm(emptyOrderForm());
     setNewCustomerName('');
+    setFormError('');
+    priceConfirmedRef.current = null;
+  };
+
+  const openCreate = () => {
+    resetNewRow();
+    setCreateOpen(true);
+  };
+
+  const closeCreate = () => {
+    setCreateOpen(false);
     setFormError('');
   };
 
@@ -268,7 +291,7 @@ export function OrdersPage() {
     setEditForm(orderToForm(order));
     setEditCustomerName(order.customers?.customer_name ?? '');
     setFormError('');
-    setExpandedId(order.id);
+    priceConfirmedRef.current = null;
   };
 
   const cancelEdit = () => {
@@ -283,7 +306,6 @@ export function OrdersPage() {
       item_name: string;
       material: string | null;
       surface_treatment: string | null;
-      unit_price: number;
       customer_id: string | null;
       customer_name: string | null;
     },
@@ -291,7 +313,6 @@ export function OrdersPage() {
     setCustName: (n: string) => void,
     currentQty: number,
   ) => {
-    const price = lookup.unit_price || 0;
     setForm((prev) => ({
       ...prev,
       item_id: lookup.item_id,
@@ -299,8 +320,6 @@ export function OrdersPage() {
       item_name: lookup.item_name,
       material: lookup.material ?? '',
       surface_treatment: lookup.surface_treatment ?? '',
-      unit_price: price,
-      total_amount: currentQty * price,
       remaining_quantity: currentQty - (prev.delivered_quantity || 0),
       customer_id: lookup.customer_id ?? prev.customer_id,
     }));
@@ -312,49 +331,157 @@ export function OrdersPage() {
     }
   };
 
-  const applyItemToForm = (
-    itemId: string,
-    setForm: Dispatch<SetStateAction<OrderInput>>,
-    setCustName: (n: string) => void,
-    currentQty: number,
-  ) => {
-    const item = items.find((i) => i.id === itemId);
-    if (!item) {
-      setForm((prev) => ({ ...prev, item_id: itemId || null }));
-      return;
-    }
-    applyLookupToForm(
-      {
-        item_id: itemId,
-        drawing_no: item.drawing_no ?? '',
-        item_name: item.item_name,
-        material: item.material,
-        surface_treatment: item.surface_treatment,
-        unit_price: item.unit_price || 0,
-        customer_id: item.customer_id,
-        customer_name: item.customers?.customer_name ?? null,
-      },
-      setForm,
-      setCustName,
-      currentQty,
-    );
-  };
-
   const handleDrawingBlur = async (
     drawingNo: string,
     setForm: Dispatch<SetStateAction<OrderInput>>,
     setCustName: (n: string) => void,
     currentQty: number,
+    currentUnitPrice: number,
   ) => {
     const trimmed = drawingNo.trim();
     if (!trimmed) return;
+    priceConfirmedRef.current = null;
     try {
-      const lookup = await lookupByDrawingNo(trimmed);
+      const [lookup, bomRow] = await Promise.all([
+        lookupByDrawingNo(trimmed),
+        lookupBomByDrawingNo(trimmed),
+      ]);
+      const bomPrice =
+        bomRow != null && bomRow.unit_price > 0 ? bomRow.unit_price : null;
+
       if (lookup) {
-        applyLookupToForm(lookup, setForm, setCustName, currentQty);
+        applyLookupToForm(
+          {
+            item_id: lookup.item_id,
+            drawing_no: lookup.drawing_no,
+            item_name: lookup.item_name,
+            material: lookup.material,
+            surface_treatment: lookup.surface_treatment,
+            customer_id: lookup.customer_id,
+            customer_name: lookup.customer_name,
+          },
+          setForm,
+          setCustName,
+          currentQty,
+        );
+        await resolveFormUnitPrice(
+          trimmed,
+          Number(currentUnitPrice) || 0,
+          currentQty,
+          setForm,
+        );
+      } else if (bomPrice != null) {
+        await resolveFormUnitPrice(
+          trimmed,
+          Number(currentUnitPrice) || 0,
+          currentQty,
+          setForm,
+        );
       }
     } catch {
       /* lookup failure — keep manual input */
+    }
+  };
+
+  const handleDrawingSelect = async (
+    candidate: DrawingCandidate,
+    setForm: Dispatch<SetStateAction<OrderInput>>,
+    setCustName: (n: string) => void,
+    currentQty: number,
+    currentUnitPrice: number,
+  ) => {
+    priceConfirmedRef.current = null;
+    try {
+      applyLookupToForm(
+        {
+          item_id: candidate.item_id ?? '',
+          drawing_no: candidate.drawing_no,
+          item_name: candidate.item_name,
+          material: candidate.material,
+          surface_treatment: candidate.surface_treatment,
+          customer_id: null,
+          customer_name: null,
+        },
+        setForm,
+        setCustName,
+        currentQty,
+      );
+      await resolveFormUnitPrice(
+        candidate.drawing_no,
+        Number(currentUnitPrice) || 0,
+        currentQty,
+        setForm,
+      );
+    } catch {
+      /* lookup failure — keep manual input */
+    }
+  };
+
+  const handleSeqNoLookup = async (
+    seqNo: string,
+    setForm: Dispatch<SetStateAction<OrderInput>>,
+    setCustName: (n: string) => void,
+    excludeOrderId?: string | null,
+  ) => {
+    const trimmed = seqNo.trim();
+    if (!trimmed) return;
+
+    setSeqLookupLoading(true);
+    setFormError('');
+    try {
+      const dbOrder = await getOrderBySeqNo(trimmed);
+      if (dbOrder) {
+        if (excludeOrderId && dbOrder.id !== excludeOrderId) {
+          setFormError(
+            `순번 ${trimmed}: 이미 등록된 수주입니다. (도번 ${dbOrder.drawing_no ?? '-'})`,
+          );
+          return;
+        }
+        setForm(orderToForm(dbOrder));
+        setCustName(dbOrder.customers?.customer_name ?? '');
+        return;
+      }
+
+      const excelRow = await lookupSeqInReferenceExcel(trimmed);
+      if (excelRow) {
+        const { fields, customerName } = excelRowToOrderFields(
+          excelRow,
+          customers,
+        );
+        let customerId = fields.customer_id ?? null;
+        if (customerName.trim()) {
+          const customer = await findOrCreateCustomer(customerName, userEmail);
+          customerId = customer.id;
+          setCustName(customerName);
+          setCustomers(await fetchCustomers());
+        }
+        setForm((prev) => ({
+          ...prev,
+          ...fields,
+          seq_no: trimmed,
+          item_id: prev.item_id,
+          customer_id: customerId,
+        }));
+        if (fields.drawing_no) {
+          await resolveFormUnitPrice(
+            fields.drawing_no,
+            Number(fields.unit_price ?? 0),
+            Number(fields.order_quantity ?? 0),
+            setForm,
+          );
+        }
+        return;
+      }
+
+      setFormError(
+        `순번 ${trimmed}: DB·참조 엑셀에서 찾을 수 없습니다.\n(형식 설정 시 샘플 파일을 저장했는지 확인해 주세요)`,
+      );
+    } catch (err) {
+      setFormError(
+        err instanceof Error ? err.message : '순번 조회에 실패했습니다.',
+      );
+    } finally {
+      setSeqLookupLoading(false);
     }
   };
 
@@ -362,6 +489,7 @@ export function OrdersPage() {
     form: OrderInput,
     customerName: string,
     orderId: string | null,
+    setForm: Dispatch<SetStateAction<OrderInput>>,
   ) => {
     if (!customerName.trim()) {
       setFormError('거래처를 입력해 주세요.');
@@ -375,27 +503,108 @@ export function OrdersPage() {
       setFormError('품명을 입력해 주세요.');
       return;
     }
-    setSaving(true);
     setFormError('');
     try {
+      const resolvedForm = await ensureFormUnitPriceBeforeSave(form, setForm);
+      if (!resolvedForm) return;
+
       const customer = await findOrCreateCustomer(customerName, userEmail);
-      const payload = { ...form, customer_id: customer.id };
+      const payload = { ...resolvedForm, customer_id: customer.id };
+
+      setSaving(true);
+
+      const itemId = await upsertItemFromOrder({
+        drawing_no: resolvedForm.drawing_no!,
+        item_name: resolvedForm.item_name!,
+        material: resolvedForm.material ?? undefined,
+        surface_treatment: resolvedForm.surface_treatment ?? undefined,
+        customer_id: customer.id,
+        unit_price: payload.unit_price,
+        userEmail,
+        keepMasterUnitPrice: true,
+      });
+      const savePayload = { ...payload, item_id: itemId };
+
+      await syncBomFieldsByDrawingNo(
+        resolvedForm.drawing_no!,
+        {
+          item_name: resolvedForm.item_name!,
+          material: resolvedForm.material ?? null,
+          surface_treatment: resolvedForm.surface_treatment ?? null,
+        },
+        userEmail,
+      );
+
       setCustomers(await fetchCustomers());
       if (orderId) {
-        await updateOrder(orderId, payload, userEmail);
+        await updateOrder(orderId, savePayload, userEmail);
         setEditingId(null);
       } else {
-        await createOrder(payload, userEmail);
+        await createOrder(savePayload, userEmail);
+        closeCreate();
         resetNewRow();
       }
+
+      await createDefaultBomIfEmpty({
+        parent_item_id: itemId,
+        drawing_no: resolvedForm.drawing_no!,
+        item_name: resolvedForm.item_name!,
+        material: resolvedForm.material ?? undefined,
+        surface_treatment: resolvedForm.surface_treatment ?? undefined,
+        progress_place: resolvedForm.progress_place ?? undefined,
+        userEmail,
+      });
+
       await load();
     } catch (err) {
-      setFormError(
-        err instanceof Error ? err.message : '저장에 실패했습니다.',
-      );
+      setFormError(formatTechnicalError(err) || '저장에 실패했습니다.');
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleStatusChange = async (orderId: string, status: OrderStatus) => {
+    setStatusUpdatingId(orderId);
+    try {
+      await updateOrderStatus(orderId, status, userEmail);
+      setOrders((prev) =>
+        prev.map((o) => (o.id === orderId ? { ...o, order_status: status } : o)),
+      );
+      if (editingId === orderId) {
+        setEditForm((p) => ({ ...p, order_status: status }));
+      }
+    } catch (err) {
+      alert(
+        err instanceof Error ? err.message : '상태 변경에 실패했습니다.',
+      );
+    } finally {
+      setStatusUpdatingId(null);
+    }
+  };
+
+  const renderStatusSelect = (order: Order) => {
+    const current = order.order_status;
+    const isManual = ORDER_MANUAL_STATUSES.includes(current);
+    return (
+      <select
+        className="cell-input cell-input-status"
+        value={current}
+        disabled={statusUpdatingId === order.id}
+        onChange={(e) => {
+          const next = e.target.value as OrderStatus;
+          void handleStatusChange(order.id, next);
+        }}
+      >
+        {!isManual && (
+          <option value={current}>{current}</option>
+        )}
+        {ORDER_MANUAL_STATUSES.map((s) => (
+          <option key={s} value={s}>
+            {s}
+          </option>
+        ))}
+      </select>
+    );
   };
 
   const handleDelete = async (id: string) => {
@@ -443,11 +652,6 @@ export function OrdersPage() {
     <div className="orders-inline-page">
       <div className="page-header">
         <h1 className="page-title">수주관리</h1>
-        <div className="page-actions">
-          <button className="btn btn-secondary btn-sm" onClick={resetNewRow}>
-            입력 초기화
-          </button>
-        </div>
       </div>
 
       {error && (
@@ -458,7 +662,7 @@ export function OrdersPage() {
           <span className="alert-text">{error}</span>
         </div>
       )}
-      {formError && (
+      {formError && !createOpen && !editingId && (
         <div className="alert alert-error" role="alert">
           <span className="alert-icon" aria-hidden="true">
             !
@@ -527,6 +731,18 @@ export function OrdersPage() {
             onChange={(e) => updateSearch('dueDateTo', e.target.value)}
           />
         </div>
+        <button
+          className="btn btn-secondary"
+          onClick={() => setExcelModalOpen(true)}
+        >
+          엑셀 업로드
+        </button>
+        <button
+          className="btn btn-ghost btn-sm"
+          onClick={() => setExcelFormatModalOpen(true)}
+        >
+          엑셀 형식 설정
+        </button>
         <button className="btn btn-secondary" onClick={load}>
           검색
         </button>
@@ -539,6 +755,151 @@ export function OrdersPage() {
           정렬 초기화
         </button>
       </div>
+
+      <div className="orders-action-bar">
+        <button
+          type="button"
+          className="btn btn-seq-add"
+          onClick={() => setSeqModalOpen(true)}
+        >
+          순번 추가
+        </button>
+        <button type="button" className="btn btn-order-add" onClick={openCreate}>
+          + 수주추가
+        </button>
+      </div>
+
+      <OrderFormModal
+        open={createOpen}
+        mode="create"
+        form={newForm}
+        customerName={newCustomerName}
+        customers={customers}
+        customerDatalistId={customerDatalistId}
+        formError={formError}
+        saving={saving}
+        seqLookupLoading={seqLookupLoading}
+        onFormChange={setNewForm}
+        onCustomerChange={setNewCustomerName}
+        onClose={closeCreate}
+        onSave={() => validateAndSave(newForm, newCustomerName, null, setNewForm)}
+        onSeqLookup={() =>
+          void handleSeqNoLookup(newForm.seq_no ?? '', setNewForm, setNewCustomerName)
+        }
+        onDrawingBlur={(drawingNo) =>
+          void handleDrawingBlur(
+            drawingNo,
+            setNewForm,
+            setNewCustomerName,
+            newForm.order_quantity,
+            newForm.unit_price,
+          )
+        }
+        onDrawingSelect={(candidate) =>
+          void handleDrawingSelect(
+            candidate,
+            setNewForm,
+            setNewCustomerName,
+            newForm.order_quantity,
+            newForm.unit_price,
+          )
+        }
+        onUnitPriceBlur={(unitPrice) =>
+          void resolveFormUnitPrice(
+            newForm.drawing_no ?? '',
+            unitPrice,
+            newForm.order_quantity,
+            setNewForm,
+          )
+        }
+      />
+
+      <OrderFormModal
+        open={editingId !== null}
+        mode="edit"
+        form={editForm}
+        customerName={editCustomerName}
+        customers={customers}
+        customerDatalistId={customerDatalistId}
+        formError={formError}
+        saving={saving}
+        seqLookupLoading={seqLookupLoading}
+        onFormChange={setEditForm}
+        onCustomerChange={setEditCustomerName}
+        onClose={cancelEdit}
+        onSave={() => {
+          if (editingId) {
+            void validateAndSave(editForm, editCustomerName, editingId, setEditForm);
+          }
+        }}
+        onSeqLookup={() =>
+          void handleSeqNoLookup(
+            editForm.seq_no ?? '',
+            setEditForm,
+            setEditCustomerName,
+            editingId ?? undefined,
+          )
+        }
+        onDrawingBlur={(drawingNo) =>
+          void handleDrawingBlur(
+            drawingNo,
+            setEditForm,
+            setEditCustomerName,
+            editForm.order_quantity,
+            editForm.unit_price,
+          )
+        }
+        onDrawingSelect={(candidate) =>
+          void handleDrawingSelect(
+            candidate,
+            setEditForm,
+            setEditCustomerName,
+            editForm.order_quantity,
+            editForm.unit_price,
+          )
+        }
+        onUnitPriceBlur={(unitPrice) =>
+          void resolveFormUnitPrice(
+            editForm.drawing_no ?? '',
+            unitPrice,
+            editForm.order_quantity,
+            setEditForm,
+          )
+        }
+      />
+
+      <ExcelUploadModal
+        isOpen={excelModalOpen}
+        onClose={() => setExcelModalOpen(false)}
+        onComplete={load}
+        onOpenFormatSetup={() => {
+          setExcelModalOpen(false);
+          setExcelFormatModalOpen(true);
+        }}
+        customers={customers}
+      />
+
+      <ExcelFormatSetupModal
+        isOpen={excelFormatModalOpen}
+        onClose={() => setExcelFormatModalOpen(false)}
+        onSaved={() => {
+          setExcelFormatModalOpen(false);
+          setExcelModalOpen(true);
+        }}
+      />
+
+      <SeqNoActionModal
+        open={seqModalOpen}
+        onClose={() => setSeqModalOpen(false)}
+        onComplete={load}
+        customers={customers}
+        onOpenFormatSetup={() => {
+          setSeqModalOpen(false);
+          setExcelFormatModalOpen(true);
+        }}
+      />
+
+      {unitPriceChoice.modal}
 
       <datalist id={customerDatalistId}>
         {customers.map((c) => (
@@ -563,8 +924,8 @@ export function OrdersPage() {
                 <thead>
                   <tr>
                     <th style={{ width: 36 }}></th>
+                    <th>순번</th>
                     {renderSortTh('order_status', '상태')}
-                    {renderSortTh('process_status', '공정')}
                     {renderSortTh('customer_name', '거래처')}
                     {renderSortTh('order_no', '발주번호')}
                     {renderSortTh('drawing_no', '도번')}
@@ -579,208 +940,33 @@ export function OrdersPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {/* 신규 입력 행 */}
-                  <tr className="order-input-row">
-                    <td>
-                      <span className="row-badge-new">신규</span>
-                    </td>
-                    <td>
-                      <select
-                        className="cell-input"
-                        value={newForm.order_status}
-                        onChange={(e) =>
-                          setNewForm((p) =>
-                            patchForm(p, 'order_status', e.target.value),
-                          )
-                        }
-                      >
-                        {ORDER_STATUSES.map((s) => (
-                          <option key={s} value={s}>
-                            {s}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td>
-                      <select
-                        className="cell-input"
-                        value={newForm.process_status}
-                        onChange={(e) =>
-                          setNewForm((p) =>
-                            patchForm(p, 'process_status', e.target.value),
-                          )
-                        }
-                      >
-                        {PROCESS_STATUSES.map((s) => (
-                          <option key={s} value={s}>
-                            {s}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td>
-                      <input
-                        className="cell-input"
-                        list={customerDatalistId}
-                        value={newCustomerName}
-                        onChange={(e) => setNewCustomerName(e.target.value)}
-                        placeholder="거래처"
-                      />
-                    </td>
-                    <td>
-                      <input
-                        className="cell-input"
-                        value={newForm.order_no ?? ''}
-                        onChange={(e) =>
-                          setNewForm((p) =>
-                            patchForm(p, 'order_no', e.target.value),
-                          )
-                        }
-                      />
-                    </td>
-                    <td>
-                      <input
-                        className="cell-input"
-                        list={drawingDatalistId}
-                        value={newForm.drawing_no ?? ''}
-                        placeholder="도번"
-                        onChange={(e) =>
-                          setNewForm((p) =>
-                            patchForm(p, 'drawing_no', e.target.value),
-                          )
-                        }
-                        onBlur={(e) =>
-                          handleDrawingBlur(
-                            e.target.value,
-                            setNewForm,
-                            setNewCustomerName,
-                            newForm.order_quantity,
-                          )
-                        }
-                      />
-                    </td>
-                    <td>
-                      <input
-                        className="cell-input"
-                        value={newForm.item_name ?? ''}
-                        placeholder="품명"
-                        onChange={(e) =>
-                          setNewForm((p) =>
-                            patchForm(p, 'item_name', e.target.value),
-                          )
-                        }
-                      />
-                      <select
-                        className="cell-input cell-input-sub"
-                        value={newForm.item_id ?? ''}
-                        onChange={(e) =>
-                          applyItemToForm(
-                            e.target.value,
-                            setNewForm,
-                            setNewCustomerName,
-                            newForm.order_quantity,
-                          )
-                        }
-                      >
-                        <option value="">품목에서 선택</option>
-                        {items.map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {formatItemLabel(item)}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td>
-                      <input
-                        type="number"
-                        className="cell-input cell-input-num"
-                        value={newForm.order_quantity}
-                        onChange={(e) =>
-                          setNewForm((p) =>
-                            patchForm(
-                              p,
-                              'order_quantity',
-                              Number(e.target.value),
-                            ),
-                          )
-                        }
-                      />
-                    </td>
-                    <td className="text-muted">0</td>
-                    <td className="text-muted">{newForm.remaining_quantity}</td>
-                    <td>
-                      <input
-                        type="date"
-                        className="cell-input"
-                        value={newForm.due_date ?? ''}
-                        onChange={(e) =>
-                          setNewForm((p) =>
-                            patchForm(p, 'due_date', e.target.value),
-                          )
-                        }
-                      />
-                    </td>
-                    <td>
-                      <input
-                        className="cell-input"
-                        value={newForm.person_in_charge ?? ''}
-                        onChange={(e) =>
-                          setNewForm((p) =>
-                            patchForm(p, 'person_in_charge', e.target.value),
-                          )
-                        }
-                      />
-                    </td>
-                    <td className="text-right cell-amount">
-                      <input
-                        type="number"
-                        className="cell-input cell-input-num"
-                        value={newForm.unit_price}
-                        onChange={(e) =>
-                          setNewForm((p) =>
-                            patchForm(p, 'unit_price', Number(e.target.value)),
-                          )
-                        }
-                      />
-                      <span className="cell-amount-total">
-                        {Number(newForm.total_amount).toLocaleString()}
-                      </span>
-                    </td>
-                    <td>
-                      <button
-                        className="btn btn-primary btn-sm"
-                        disabled={saving}
-                        onClick={() =>
-                          validateAndSave(newForm, newCustomerName, null)
-                        }
-                      >
-                        {saving ? '...' : '저장'}
-                      </button>
-                    </td>
-                  </tr>
-
                   {sortedOrders.length === 0 && (
                     <tr>
                       <td colSpan={14} className="order-empty-hint">
-                        아래 목록이 비어 있습니다. 상단 입력 행에서 수주를
-                        등록해 주세요.
+                        등록된 수주가 없습니다.{' '}
+                        <button
+                          type="button"
+                          className="btn-link"
+                          onClick={openCreate}
+                        >
+                          + 수주추가
+                        </button>
+                        로 등록해 주세요.
                       </td>
                     </tr>
                   )}
 
                   {sortedOrders.map((order) => {
-                    const isEditing = editingId === order.id;
                     const isExpanded = expandedId === order.id;
-                    const form = isEditing ? editForm : orderToForm(order);
-                    const custName = isEditing
-                      ? editCustomerName
-                      : order.customers?.customer_name ?? '';
+                    const detailForm = orderToForm(order);
+                    const detailCustomerName =
+                      order.customers?.customer_name ?? '';
 
                     return (
                       <Fragment key={order.id}>
                         <tr
                           className={
-                            isEditing ? 'order-edit-row' : undefined
+                            editingId === order.id ? 'order-edit-row' : undefined
                           }
                         >
                           <td>
@@ -797,264 +983,33 @@ export function OrdersPage() {
                               {isExpanded ? '▼' : '▶'}
                             </button>
                           </td>
-                          <td>
-                            {isEditing ? (
-                              <select
-                                className="cell-input"
-                                value={form.order_status}
-                                onChange={(e) =>
-                                  setEditForm((p) =>
-                                    patchForm(p, 'order_status', e.target.value),
-                                  )
-                                }
-                              >
-                                {ORDER_STATUSES.map((s) => (
-                                  <option key={s} value={s}>
-                                    {s}
-                                  </option>
-                                ))}
-                              </select>
-                            ) : (
-                              <OrderStatusBadge status={order.order_status} />
-                            )}
-                          </td>
-                          <td>
-                            {isEditing ? (
-                              <select
-                                className="cell-input"
-                                value={form.process_status}
-                                onChange={(e) =>
-                                  setEditForm((p) =>
-                                    patchForm(
-                                      p,
-                                      'process_status',
-                                      e.target.value,
-                                    ),
-                                  )
-                                }
-                              >
-                                {PROCESS_STATUSES.map((s) => (
-                                  <option key={s} value={s}>
-                                    {s}
-                                  </option>
-                                ))}
-                              </select>
-                            ) : (
-                              <ProcessStatusBadge
-                                status={order.process_status}
-                              />
-                            )}
-                          </td>
-                          <td>
-                            {isEditing ? (
-                              <input
-                                className="cell-input"
-                                list={customerDatalistId}
-                                value={custName}
-                                onChange={(e) =>
-                                  setEditCustomerName(e.target.value)
-                                }
-                              />
-                            ) : (
-                              order.customers?.customer_name ?? '-'
-                            )}
-                          </td>
-                          <td>
-                            {isEditing ? (
-                              <input
-                                className="cell-input"
-                                value={form.order_no ?? ''}
-                                onChange={(e) =>
-                                  setEditForm((p) =>
-                                    patchForm(p, 'order_no', e.target.value),
-                                  )
-                                }
-                              />
-                            ) : (
-                              order.order_no ?? '-'
-                            )}
-                          </td>
-                          <td>
-                            {isEditing ? (
-                              <input
-                                className="cell-input"
-                                list={drawingDatalistId}
-                                value={form.drawing_no ?? ''}
-                                onChange={(e) =>
-                                  setEditForm((p) =>
-                                    patchForm(p, 'drawing_no', e.target.value),
-                                  )
-                                }
-                                onBlur={(e) =>
-                                  handleDrawingBlur(
-                                    e.target.value,
-                                    setEditForm,
-                                    setEditCustomerName,
-                                    editForm.order_quantity,
-                                  )
-                                }
-                              />
-                            ) : (
-                              order.drawing_no ?? '-'
-                            )}
-                          </td>
-                          <td>
-                            {isEditing ? (
-                              <>
-                                <input
-                                  className="cell-input"
-                                  value={form.item_name ?? ''}
-                                  onChange={(e) =>
-                                    setEditForm((p) =>
-                                      patchForm(p, 'item_name', e.target.value),
-                                    )
-                                  }
-                                />
-                                <select
-                                  className="cell-input cell-input-sub"
-                                  value={form.item_id ?? ''}
-                                  onChange={(e) =>
-                                    applyItemToForm(
-                                      e.target.value,
-                                      setEditForm,
-                                      setEditCustomerName,
-                                      editForm.order_quantity,
-                                    )
-                                  }
-                                >
-                                  <option value="">품목에서 선택</option>
-                                  {items.map((item) => (
-                                    <option key={item.id} value={item.id}>
-                                      {formatItemLabel(item)}
-                                    </option>
-                                  ))}
-                                </select>
-                              </>
-                            ) : (
-                              order.item_name ?? '-'
-                            )}
-                          </td>
-                          <td>
-                            {isEditing ? (
-                              <input
-                                type="number"
-                                className="cell-input cell-input-num"
-                                value={form.order_quantity}
-                                onChange={(e) =>
-                                  setEditForm((p) =>
-                                    patchForm(
-                                      p,
-                                      'order_quantity',
-                                      Number(e.target.value),
-                                    ),
-                                  )
-                                }
-                              />
-                            ) : (
-                              order.order_quantity
-                            )}
-                          </td>
-                          <td>{order.delivered_quantity}</td>
-                          <td>{order.remaining_quantity}</td>
-                          <td>
-                            {isEditing ? (
-                              <input
-                                type="date"
-                                className="cell-input"
-                                value={form.due_date ?? ''}
-                                onChange={(e) =>
-                                  setEditForm((p) =>
-                                    patchForm(p, 'due_date', e.target.value),
-                                  )
-                                }
-                              />
-                            ) : (
-                              order.due_date ?? '-'
-                            )}
-                          </td>
-                          <td>
-                            {isEditing ? (
-                              <input
-                                className="cell-input"
-                                value={form.person_in_charge ?? ''}
-                                onChange={(e) =>
-                                  setEditForm((p) =>
-                                    patchForm(
-                                      p,
-                                      'person_in_charge',
-                                      e.target.value,
-                                    ),
-                                  )
-                                }
-                              />
-                            ) : (
-                              order.person_in_charge ?? '-'
-                            )}
-                          </td>
+                          <td>{order.seq_no ?? '-'}</td>
+                          <td>{renderStatusSelect(order)}</td>
+                          <td>{order.customers?.customer_name ?? '-'}</td>
+                          <td>{order.order_no ?? '-'}</td>
+                          <td>{order.drawing_no ?? '-'}</td>
+                          <td>{order.item_name ?? '-'}</td>
+                          <td>{formatNumber(order.order_quantity)}</td>
+                          <td>{formatNumber(order.delivered_quantity)}</td>
+                          <td>{formatNumber(order.remaining_quantity)}</td>
+                          <td>{order.due_date ?? '-'}</td>
+                          <td>{order.person_in_charge ?? '-'}</td>
                           <td className="text-right cell-amount">
-                            {isEditing ? (
-                              <>
-                                <input
-                                  type="number"
-                                  className="cell-input cell-input-num"
-                                  value={form.unit_price}
-                                  onChange={(e) =>
-                                    setEditForm((p) =>
-                                      patchForm(
-                                        p,
-                                        'unit_price',
-                                        Number(e.target.value),
-                                      ),
-                                    )
-                                  }
-                                />
-                                <span className="cell-amount-total">
-                                  {Number(form.total_amount).toLocaleString()}
-                                </span>
-                              </>
-                            ) : (
-                              (order.total_amount?.toLocaleString() ?? 0)
-                            )}
+                            {formatNumber(order.total_amount)}
                           </td>
                           <td>
-                            {isEditing ? (
-                              <>
-                                <button
-                                  className="btn btn-primary btn-sm"
-                                  disabled={saving}
-                                  onClick={() =>
-                                    validateAndSave(
-                                      editForm,
-                                      editCustomerName,
-                                      order.id,
-                                    )
-                                  }
-                                >
-                                  저장
-                                </button>{' '}
-                                <button
-                                  className="btn btn-secondary btn-sm"
-                                  onClick={cancelEdit}
-                                >
-                                  취소
-                                </button>
-                              </>
-                            ) : (
-                              <>
-                                <button
-                                  className="btn btn-secondary btn-sm"
-                                  onClick={() => startEdit(order)}
-                                >
-                                  편집
-                                </button>{' '}
-                                <button
-                                  className="btn btn-danger btn-sm"
-                                  onClick={() => handleDelete(order.id)}
-                                >
-                                  삭제
-                                </button>
-                              </>
-                            )}
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => startEdit(order)}
+                            >
+                              편집
+                            </button>{' '}
+                            <button
+                              className="btn btn-danger btn-sm"
+                              onClick={() => handleDelete(order.id)}
+                            >
+                              삭제
+                            </button>
                           </td>
                         </tr>
                         {isExpanded && (
@@ -1063,12 +1018,17 @@ export function OrdersPage() {
                             className="order-expanded-row"
                           >
                             <td colSpan={14}>
-                              <OrderDetailPanel
-                                form={form}
-                                isEditing={isEditing}
-                                items={items}
-                                onFormChange={setEditForm}
-                              />
+                              <div className="order-detail-panel">
+                                <OrderFormFields
+                                  form={detailForm}
+                                  customerName={detailCustomerName}
+                                  customers={customers}
+                                  readonly
+                                  customerDatalistId={customerDatalistId}
+                                  onFormChange={() => {}}
+                                  onCustomerChange={() => {}}
+                                />
+                              </div>
                             </td>
                           </tr>
                         )}
@@ -1081,140 +1041,6 @@ export function OrdersPage() {
           )}
         </div>
       </div>
-    </div>
-  );
-}
-
-function OrderDetailPanel({
-  form,
-  isEditing,
-  items,
-  onFormChange,
-}: {
-  form: OrderInput;
-  isEditing: boolean;
-  items: Item[];
-  onFormChange: Dispatch<SetStateAction<OrderInput>>;
-}) {
-  const set = (field: keyof OrderInput, value: string | number | null) => {
-    if (!isEditing) return;
-    onFormChange((prev) => patchForm(prev, field, value));
-  };
-
-  return (
-    <div className="order-detail-panel">
-      <div className="order-detail-grid">
-        <DetailField label="접수일" value={form.received_date ?? '-'}>
-          {isEditing && (
-            <input
-              type="date"
-              className="cell-input"
-              value={form.received_date ?? ''}
-              onChange={(e) => set('received_date', e.target.value)}
-            />
-          )}
-        </DetailField>
-        <DetailField
-          label="연결 품목"
-          value={formatLinkedItem(form.item_id, items, {
-            drawing_no: form.drawing_no,
-            item_name: form.item_name,
-          })}
-        />
-        <DetailField label="재질" value={form.material ?? '-'} />
-        <DetailField label="후처리" value={form.surface_treatment ?? '-'} />
-        <DetailField label="단가" value={Number(form.unit_price).toLocaleString()}>
-          {isEditing && (
-            <input
-              type="number"
-              className="cell-input"
-              value={form.unit_price}
-              onChange={(e) => set('unit_price', Number(e.target.value))}
-            />
-          )}
-        </DetailField>
-        <DetailField
-          label="생산수량"
-          value={String(form.produced_quantity ?? 0)}
-        />
-        <DetailField
-          label="불량수량"
-          value={String(form.defect_quantity ?? 0)}
-        />
-        <DetailField label="프로젝트명" value={form.project_name ?? '-'}>
-          {isEditing && (
-            <input
-              className="cell-input"
-              value={form.project_name ?? ''}
-              onChange={(e) => set('project_name', e.target.value)}
-            />
-          )}
-        </DetailField>
-        <DetailField label="진행처" value={form.progress_place ?? '-'}>
-          {isEditing && (
-            <input
-              className="cell-input"
-              value={form.progress_place ?? ''}
-              onChange={(e) => set('progress_place', e.target.value)}
-            />
-          )}
-        </DetailField>
-        <DetailField label="도면파일명" value={form.drawing_file_name ?? '-'}>
-          {isEditing && (
-            <input
-              className="cell-input"
-              value={form.drawing_file_name ?? ''}
-              onChange={(e) => set('drawing_file_name', e.target.value)}
-            />
-          )}
-        </DetailField>
-        <DetailField label="비고1" value={form.memo1 ?? '-'} wide>
-          {isEditing && (
-            <textarea
-              className="cell-input"
-              rows={2}
-              value={form.memo1 ?? ''}
-              onChange={(e) => set('memo1', e.target.value)}
-            />
-          )}
-        </DetailField>
-        <DetailField label="비고2" value={form.memo2 ?? '-'} wide>
-          {isEditing && (
-            <textarea
-              className="cell-input"
-              rows={2}
-              value={form.memo2 ?? ''}
-              onChange={(e) => set('memo2', e.target.value)}
-            />
-          )}
-        </DetailField>
-      </div>
-      {!isEditing && (
-        <p className="order-detail-hint">
-          상세 항목을 수정하려면 <strong>편집</strong>을 눌러 주세요.
-        </p>
-      )}
-    </div>
-  );
-}
-
-function DetailField({
-  label,
-  value,
-  children,
-  wide,
-}: {
-  label: string;
-  value: string;
-  children?: ReactNode;
-  wide?: boolean;
-}) {
-  return (
-    <div className={`order-detail-field${wide ? ' wide' : ''}`}>
-      <span className="order-detail-label">{label}</span>
-      {children ?? (
-        <span className="order-detail-value">{value || '-'}</span>
-      )}
     </div>
   );
 }

@@ -5,18 +5,24 @@
 ## 실행 방법
 
 ```bash
-# 의존성 설치
-npm install
+# (최초 1회) clone 후
+git clone https://github.com/player99099/gakong-pro.git
+cd gakong-pro
+npm run setup          # install + .env 생성 + Supabase 점검
 
-# 환경변수 설정 (.env.example 참고)
-cp .env.example .env
+# .env 에 Supabase URL/키 입력 (.env.example 참고)
 
-# 개발 서버 실행
-npm run dev
-
-# 프로덕션 빌드
+npm run dev            # http://localhost:5173/
 npm run build
 ```
+
+### 집 · 회사 PC 공용 작업
+
+- **코드**: `git push` / `git pull` (원격: `origin/main`)
+- **DB·데이터**: Supabase 클라우드 공유 (PC 무관)
+- **`.env`**: PC마다 1회 설정, Git에 올리지 않음
+
+상세: `HANDOFF.md` §13
 
 ## Supabase 환경변수
 

@@ -21,6 +21,8 @@ import type {
 } from '../types';
 import { Modal } from '../components/ui/Modal';
 import { EmptyState } from '../components/ui/EmptyState';
+import { NumericInput } from '../components/ui/NumericInput';
+import { formatNumber } from '../lib/formatNumber';
 import { supabase } from '../lib/supabase';
 
 const emptySearch: DeliverySearchParams = {
@@ -323,21 +325,21 @@ export function DeliveryPage() {
       <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
         <div className="stat-card primary">
           <div className="stat-label">총 납품건수</div>
-          <div className="stat-value">{stats?.totalCount ?? 0}</div>
+          <div className="stat-value">{formatNumber(stats?.totalCount ?? 0)}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">오늘 납품</div>
-          <div className="stat-value">{stats?.todayCount ?? 0}</div>
+          <div className="stat-value">{formatNumber(stats?.todayCount ?? 0)}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">이번 달 납품금액</div>
           <div className="stat-value" style={{ fontSize: '22px' }}>
-            {(stats?.monthAmount ?? 0).toLocaleString()}
+            {formatNumber(stats?.monthAmount ?? 0)}
           </div>
         </div>
         <div className="stat-card warning">
           <div className="stat-label">부분납품 진행 건</div>
-          <div className="stat-value">{stats?.partialOrderCount ?? 0}</div>
+          <div className="stat-value">{formatNumber(stats?.partialOrderCount ?? 0)}</div>
         </div>
       </div>
 
@@ -410,9 +412,9 @@ export function DeliveryPage() {
                       <td>{d.customers?.customer_name ?? '-'}</td>
                       <td>{d.order_no}</td>
                       <td>{d.item_count ?? d.delivery_items?.length ?? 0}</td>
-                      <td>{Number(d.total_quantity).toLocaleString()}</td>
+                      <td>{formatNumber(d.total_quantity)}</td>
                       <td className="text-right">
-                        {Number(d.total_amount).toLocaleString()}
+                        {formatNumber(d.total_amount)}
                       </td>
                       <td>{d.memo ?? '-'}</td>
                       <td onClick={(e) => e.stopPropagation()}>
@@ -511,7 +513,7 @@ export function DeliveryPage() {
           )}
           <div className="form-group">
             <label>고객사</label>
-            <input value={form.customer_name} readOnly style={{ background: '#f4f7fb' }} />
+            <input value={form.customer_name} onChange={(e) => setForm((p) => ({ ...p, customer_name: e.target.value }))} />
           </div>
           <div className="form-group full-width">
             <label>비고</label>
@@ -569,27 +571,21 @@ export function DeliveryPage() {
                         </td>
                         <td>{item.drawing_no || '-'}</td>
                         <td>{item.item_name || '-'}</td>
-                        <td>{item.order_quantity}</td>
-                        <td>{item.delivered_quantity}</td>
-                        <td>{item.remaining_quantity}</td>
+                        <td>{formatNumber(item.order_quantity)}</td>
+                        <td>{formatNumber(item.delivered_quantity)}</td>
+                        <td>{formatNumber(item.remaining_quantity)}</td>
                         <td>
-                          <input
-                            type="number"
-                            min={0}
+                          <NumericInput
                             style={{ width: 80, height: 32 }}
-                            value={item.delivery_quantity}
+                            value={Number(item.delivery_quantity)}
                             disabled={!item.checked}
-                            onChange={(e) =>
-                              updateItem(
-                                item.order_id,
-                                'delivery_quantity',
-                                Number(e.target.value),
-                              )
+                            onChange={(n) =>
+                              updateItem(item.order_id, 'delivery_quantity', n)
                             }
                           />
                         </td>
-                        <td>{item.unit_price.toLocaleString()}</td>
-                        <td>{item.amount.toLocaleString()}</td>
+                        <td>{formatNumber(item.unit_price)}</td>
+                        <td>{formatNumber(item.amount)}</td>
                         <td>
                           <input
                             style={{ width: 100, height: 32 }}
@@ -616,8 +612,8 @@ export function DeliveryPage() {
                 color: 'var(--color-text-heading)',
               }}
             >
-              합계: 수량 {formTotalQty.toLocaleString()} / 금액{' '}
-              {formTotalAmount.toLocaleString()}원
+              합계: 수량 {formatNumber(formTotalQty)} / 금액{' '}
+              {formatNumber(formTotalAmount)}원
             </div>
           </div>
         )}

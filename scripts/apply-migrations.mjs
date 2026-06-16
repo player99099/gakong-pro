@@ -1,8 +1,8 @@
 /**
- * Supabase DB에 migration SQL 적용 (002 → 003)
+ * Supabase DB에 migration SQL 적용 (002 → 003 → 004)
  *
  * .env에 SUPABASE_DB_PASSWORD 필요
- * 사용: node scripts/apply-migrations.mjs
+ * 사용: npm run db:migrate
  */
 import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
@@ -24,7 +24,13 @@ function loadEnv() {
 
 loadEnv();
 
-const projectRef = 'myhujwvcrdzamsxwxeff';
+function getProjectRef() {
+  const url = process.env.VITE_SUPABASE_URL ?? '';
+  const match = url.match(/https:\/\/([^.]+)\.supabase\.co/);
+  return match?.[1] ?? 'myhujwvcrdzamsxwxeff';
+}
+
+const projectRef = getProjectRef();
 const password = process.env.SUPABASE_DB_PASSWORD;
 
 if (!password) {
@@ -37,6 +43,8 @@ const connectionString = `postgresql://postgres.${projectRef}:${encodeURICompone
 const migrations = [
   '002_deliveries.sql',
   '003_full_mvp.sql',
+  '004_orders_seq_bom.sql',
+  '005_orders_required_columns.sql',
 ];
 
 const client = new pg.Client({ connectionString, ssl: { rejectUnauthorized: false } });

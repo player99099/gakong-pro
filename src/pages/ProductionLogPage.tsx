@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { DEFAULT_DEFECT_TYPES, DEFAULT_SETUP_TYPES } from '../lib/constants';
+import { formatNumber } from '../lib/formatNumber';
 import {
   createProductionLog,
   deleteProductionLog,
@@ -24,6 +25,7 @@ import type {
 } from '../types';
 import { Modal } from '../components/ui/Modal';
 import { EmptyState } from '../components/ui/EmptyState';
+import { NumericInput } from '../components/ui/NumericInput';
 
 const emptySearch: ProductionLogSearchParams = {
   workDateFrom: '',
@@ -268,19 +270,19 @@ export function ProductionLogPage() {
       <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
         <div className="stat-card primary">
           <div className="stat-label">오늘 등록건수</div>
-          <div className="stat-value">{stats?.todayCount ?? 0}</div>
+          <div className="stat-value">{formatNumber(stats?.todayCount ?? 0)}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">오늘 가공시간(분)</div>
-          <div className="stat-value">{stats?.todayMinutes ?? 0}</div>
+          <div className="stat-value">{formatNumber(stats?.todayMinutes ?? 0)}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">오늘 생산수량</div>
-          <div className="stat-value">{stats?.todayProductionQty ?? 0}</div>
+          <div className="stat-value">{formatNumber(stats?.todayProductionQty ?? 0)}</div>
         </div>
         <div className="stat-card warning">
           <div className="stat-label">오늘 불량수량</div>
-          <div className="stat-value">{stats?.todayDefectQty ?? 0}</div>
+          <div className="stat-value">{formatNumber(stats?.todayDefectQty ?? 0)}</div>
         </div>
       </div>
 
@@ -388,11 +390,11 @@ export function ProductionLogPage() {
                       <td>{log.order_no ?? '-'}</td>
                       <td>{log.drawing_no ?? '-'}</td>
                       <td>{log.item_name ?? '-'}</td>
-                      <td>{Number(log.processing_minutes).toLocaleString()}</td>
-                      <td>{Number(log.production_quantity).toLocaleString()}</td>
-                      <td>{Number(log.defect_quantity).toLocaleString()}</td>
+                      <td>{formatNumber(log.processing_minutes)}</td>
+                      <td>{formatNumber(log.production_quantity)}</td>
+                      <td>{formatNumber(log.defect_quantity)}</td>
                       <td>{log.defect_type ?? '-'}</td>
-                      <td>{Number(log.setup_minutes).toLocaleString()}</td>
+                      <td>{formatNumber(log.setup_minutes)}</td>
                       <td>{log.setup_type ?? '-'}</td>
                       <td>{log.note ?? '-'}</td>
                       <td onClick={(e) => e.stopPropagation()}>
@@ -465,32 +467,28 @@ export function ProductionLogPage() {
             <label>고객사</label>
             <input
               value={form.customer_name ?? ''}
-              readOnly
-              style={{ background: '#f4f7fb' }}
+              onChange={(e) => updateField('customer_name', e.target.value || null)}
             />
           </div>
           <div className="form-group">
             <label>발주번호</label>
             <input
               value={form.order_no ?? ''}
-              readOnly
-              style={{ background: '#f4f7fb' }}
+              onChange={(e) => updateField('order_no', e.target.value || null)}
             />
           </div>
           <div className="form-group">
             <label>도번</label>
             <input
               value={form.drawing_no ?? ''}
-              readOnly
-              style={{ background: '#f4f7fb' }}
+              onChange={(e) => updateField('drawing_no', e.target.value || null)}
             />
           </div>
           <div className="form-group">
             <label>품명</label>
             <input
               value={form.item_name ?? ''}
-              readOnly
-              style={{ background: '#f4f7fb' }}
+              onChange={(e) => updateField('item_name', e.target.value || null)}
             />
           </div>
           <div className="form-group">
@@ -528,35 +526,23 @@ export function ProductionLogPage() {
           </div>
           <div className="form-group">
             <label>가공시간(분)</label>
-            <input
-              type="number"
-              min={0}
-              value={form.processing_minutes}
-              onChange={(e) =>
-                updateField('processing_minutes', Number(e.target.value))
-              }
+            <NumericInput
+              value={Number(form.processing_minutes)}
+              onChange={(n) => updateField('processing_minutes', n)}
             />
           </div>
           <div className="form-group">
             <label>생산수량</label>
-            <input
-              type="number"
-              min={0}
-              value={form.production_quantity}
-              onChange={(e) =>
-                updateField('production_quantity', Number(e.target.value))
-              }
+            <NumericInput
+              value={Number(form.production_quantity)}
+              onChange={(n) => updateField('production_quantity', n)}
             />
           </div>
           <div className="form-group">
             <label>불량수량</label>
-            <input
-              type="number"
-              min={0}
-              value={form.defect_quantity}
-              onChange={(e) =>
-                updateField('defect_quantity', Number(e.target.value))
-              }
+            <NumericInput
+              value={Number(form.defect_quantity)}
+              onChange={(n) => updateField('defect_quantity', n)}
             />
           </div>
           <div className="form-group">
@@ -584,11 +570,9 @@ export function ProductionLogPage() {
           </div>
           <div className="form-group">
             <label>세팅시간(분)</label>
-            <input
-              type="number"
-              min={0}
-              value={form.setup_minutes}
-              onChange={(e) => updateField('setup_minutes', Number(e.target.value))}
+            <NumericInput
+              value={Number(form.setup_minutes)}
+              onChange={(n) => updateField('setup_minutes', n)}
             />
           </div>
           <div className="form-group">

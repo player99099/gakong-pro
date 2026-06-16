@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import {
   createDefectType,
@@ -18,6 +19,7 @@ import {
 } from '../services/settings';
 import type { CompanySettings, SettingItem } from '../types';
 import { Modal } from '../components/ui/Modal';
+import { NumericInput } from '../components/ui/NumericInput';
 import { EmptyState } from '../components/ui/EmptyState';
 
 type SettingTab = 'process' | 'defect' | 'setup' | 'surface' | 'company';
@@ -261,13 +263,16 @@ export function SettingsPage() {
     <div>
       <div className="page-header">
         <h1 className="page-title">설정</h1>
-        {activeTab !== 'company' && (
-          <div className="page-actions">
+        <div className="page-actions">
+          <Link to="/settings/print-templates" className="btn btn-secondary">
+            출력 양식 관리
+          </Link>
+          {activeTab !== 'company' && (
             <button className="btn btn-primary" onClick={openCreate}>
               + {listTabLabel} 추가
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {error && <div className="alert alert-error">{error}</div>}
@@ -395,14 +400,10 @@ export function SettingsPage() {
                       >
                         <td>{item.name}</td>
                         <td onClick={(e) => e.stopPropagation()}>
-                          <input
-                            type="number"
-                            min={0}
+                          <NumericInput
                             style={{ width: 72, height: 32 }}
-                            value={item.sort_order}
-                            onChange={(e) =>
-                              handleInlineSortChange(item, Number(e.target.value))
-                            }
+                            value={Number(item.sort_order)}
+                            onChange={(n) => handleInlineSortChange(item, n)}
                           />
                         </td>
                         <td onClick={(e) => e.stopPropagation()}>
@@ -463,11 +464,9 @@ export function SettingsPage() {
             </div>
             <div className="form-group">
               <label>정렬순서</label>
-              <input
-                type="number"
-                min={0}
-                value={itemSortOrder}
-                onChange={(e) => setItemSortOrder(Number(e.target.value))}
+              <NumericInput
+                value={Number(itemSortOrder)}
+                onChange={(n) => setItemSortOrder(n)}
               />
             </div>
           </div>
