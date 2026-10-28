@@ -42,3 +42,8 @@ ALTER TABLE work_orders ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Authenticated users full access" ON work_orders;
 CREATE POLICY "Authenticated users full access" ON work_orders
   FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+-- Explicit Data API privileges; keep RLS and policies above.
+-- No new anon/service_role grants; reviewed frontend operations only.
+GRANT USAGE ON SCHEMA public TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.work_orders TO authenticated;

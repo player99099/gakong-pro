@@ -47,3 +47,9 @@ CREATE POLICY "Authenticated users full access" ON deliveries
   FOR ALL TO authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Authenticated users full access" ON delivery_items
   FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+-- Explicit Data API privileges; keep RLS and policies above.
+-- No new anon/service_role grants; reviewed frontend operations only.
+GRANT USAGE ON SCHEMA public TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.deliveries TO authenticated;
+GRANT SELECT, INSERT, DELETE ON TABLE public.delivery_items TO authenticated;

@@ -35,6 +35,8 @@ VITE_SUPABASE_ANON_KEY=your-anon-key
 
 ## Supabase 설정
 
+신규 테이블의 Data API 권한과 복구·검증 절차는 [명시적 GRANT 안내](docs/SUPABASE-DATA-API-GRANTS.md)를 참고하세요. 저장소 SQL 수정만으로 기존 DB가 자동 갱신되지는 않습니다.
+
 1. Supabase 프로젝트 생성
 2. Authentication > Users에서 테스트 사용자 생성 (이메일/비밀번호)
 3. SQL Editor에서 `supabase/schema.sql` 실행
@@ -67,3 +69,4 @@ VITE_SUPABASE_ANON_KEY=your-anon-key
 - `docs/GPT-DIRECTOR-BRIEF.md` — GPT 첫 대화용 브리핑 (복사 붙여넣기)
 - `docs/COMMUNICATION-GUIDE.md` — GPT · Cursor · 오너 소통 가이드
 - `.cursor/rules/gakong-pro.mdc` — Cursor 자동 적용 개발 규칙
+

@@ -399,3 +399,24 @@ CREATE POLICY "Authenticated users full access" ON company_settings
   FOR ALL TO authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Authenticated users full access" ON print_templates
   FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+-- Explicit Data API privileges; keep RLS and policies above.
+-- No new anon/service_role grants; reviewed frontend operations only.
+GRANT USAGE ON SCHEMA public TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.customers TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.vendors TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.items TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.bom_items TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.orders TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.deliveries TO authenticated;
+GRANT SELECT, INSERT, DELETE ON TABLE public.delivery_items TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.work_orders TO authenticated;
+GRANT SELECT, INSERT ON TABLE public.process_logs TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.production_logs TO authenticated;
+GRANT SELECT, INSERT, UPDATE ON TABLE public.process_steps TO authenticated;
+GRANT SELECT, INSERT, UPDATE ON TABLE public.defect_types TO authenticated;
+GRANT SELECT, INSERT, UPDATE ON TABLE public.setup_types TO authenticated;
+GRANT SELECT, INSERT, UPDATE ON TABLE public.surface_treatments TO authenticated;
+GRANT SELECT, UPDATE ON TABLE public.company_settings TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.print_templates TO authenticated;
+-- users_profile: no new API grant; no profile-table call found in reviewed services/AuthContext.

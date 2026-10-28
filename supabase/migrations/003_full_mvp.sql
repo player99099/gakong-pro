@@ -181,3 +181,15 @@ INSERT INTO setup_types (name, sort_order) SELECT * FROM (VALUES
 
 INSERT INTO company_settings (company_name) SELECT '가공관리 Pro'
 WHERE NOT EXISTS (SELECT 1 FROM company_settings LIMIT 1);
+
+-- Explicit Data API privileges; keep RLS and policies above.
+-- No new anon/service_role grants; reviewed frontend operations only.
+GRANT USAGE ON SCHEMA public TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.work_orders TO authenticated;
+GRANT SELECT, INSERT ON TABLE public.process_logs TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.production_logs TO authenticated;
+GRANT SELECT, INSERT, UPDATE ON TABLE public.process_steps TO authenticated;
+GRANT SELECT, INSERT, UPDATE ON TABLE public.defect_types TO authenticated;
+GRANT SELECT, INSERT, UPDATE ON TABLE public.setup_types TO authenticated;
+GRANT SELECT, INSERT, UPDATE ON TABLE public.surface_treatments TO authenticated;
+GRANT SELECT, UPDATE ON TABLE public.company_settings TO authenticated;
